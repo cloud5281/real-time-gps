@@ -72,7 +72,7 @@
     });
 
     // 準備標記與路徑線
-    let marker = L.marker([0, 0], { icon: personIcon }).addTo(map).bindPopup(`目前位置 (${dbPath})`);
+    let marker = L.marker([0, 0], { icon: personIcon }).addTo(map).bindPopup("目前位置");
     let pathLine = L.polyline([], {color: 'blue', weight: 4}).addTo(map);
     let coordsArray = [];
 
@@ -109,5 +109,6 @@
 </body>
 
 </html>
+
 
 
