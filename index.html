@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-time GPS Tracker</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        body, html { margin: 0; padding: 0; height: 100%; }
+        #map { height: 100vh; width: 100%; }
+        .info-panel {
+            position: absolute; top: 10px; right: 10px; z-index: 1000;
+            background: white; padding: 10px; border-radius: 5px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.2); font-family: sans-serif;
+        }
+    </style>
+</head>
+<body>
+
+<div class="info-panel">
+    <b>GPS 狀態監控</b><br>
+    時間: <span id="time">-</span><br>
+    座標: <span id="coords">-</span><br>
+    <label><input type="checkbox" id="autoCenter" checked> 自動跟隨</label>
+</div>
+
+<div id="map"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+    import { getDatabase, ref, onValue } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
+
+    // --- 1. 從網址抓取參數 ---
+    const urlParams = new URLSearchParams(window.location.search);
+    const projectId = urlParams.get('id') || "test";
+    const apiKey = "AIzaSyCjPnL5my8NsG7XYCbABGh45KtKM9s4SlI";
+
+    // --- 2. 動態組合 Config ---
+    const firebaseConfig = {
+        apiKey: apiKey,
+        authDomain: `${projectId}.firebaseapp.com`,
+        databaseURL: `https://${projectId}-default-rtdb.firebaseio.com`,
+        projectId: projectId,
+        storageBucket: `${projectId}.appspot.com`,
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getDatabase(app);
+
+    // 初始化地圖 (預設座標設在台北)
+    const map = L.map('map').setView([25.0330, 121.5654], 16);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap contributors'
+    }).addTo(map);
+
+    // --- 新增：定義自訂的小人圖示 ---
+    const personIcon = L.icon({
+        // 這裡先用一個網路上的範例圖片，你可以換成自己的
+        iconUrl: './man-walking.png', 
+        
+        iconSize:     [40, 40], // 圖示的寬度和高度 [寬, 高]
+        iconAnchor:   [20, 38], // 重要！設定圖示的「腳尖」對應到地圖的哪裡。
+                                // 通常是 [寬度的一半, 高度]，讓小人穩穩站在座標點上。
+        popupAnchor:  [0, -40]  // 彈出視窗相對於圖示中心的位置 (通常在頭頂)
+    });
+
+    // --- 修改：建立標記時，加入 {icon: personIcon} 選項 ---
+    // 準備標記與路徑線
+    let marker = L.marker([0, 0], { icon: personIcon }).addTo(map).bindPopup("目前位置");
+    let pathLine = L.polyline([], {color: 'blue', weight: 4}).addTo(map);
+    let coordsArray = [];
+
+    // 1. 監聽 Latest (即時點)
+    const latestRef = ref(db, 'test/latest');
+    onValue(latestRef, (snapshot) => {
+        const data = snapshot.val();
+        if (data) {
+            const pos = [data.lat, data.lon];
+            marker.setLatLng(pos);
+            
+            // 更新介面資訊
+            document.getElementById('time').innerText = data.timestamp;
+            document.getElementById('coords').innerText = `${data.lat.toFixed(5)}, ${data.lon.toFixed(5)}`;
+
+            // 如果勾選自動跟隨，地圖隨人動
+            if (document.getElementById('autoCenter').checked) {
+                map.panTo(pos);
+            }
+        }
+    });
+
+    // 2. 監聽 History (歷史路徑)
+    const historyRef = ref(db, 'test/history');
+    onChildAdded(historyRef, (snapshot) => {
+        const data = snapshot.val();
+        if (data) {
+            const pos = [data.lat, data.lon];
+            coordsArray.push(pos);
+            pathLine.setLatLngs(coordsArray);
+        }
+    });
+
+</script>
+</body>
+</html>
