@@ -10,7 +10,7 @@
         #map { height: 100vh; width: 100%; }
         .info-panel {
             position: absolute; top: 10px; right: 10px; z-index: 1000;
-            background: white; padding: 10px; border-radius: 5px;
+            background: rgba(255, 255, 255, 0.9); padding: 12px; border-radius: 8px;
             box-shadow: 0 0 10px rgba(0,0,0,0.2); font-family: sans-serif;
         }
     </style>
@@ -19,6 +19,7 @@
 
 <div class="info-panel">
     <b>GPS 狀態監控</b><br>
+    路徑: <span id="currentPath" style="color: blue;">-</span><br>
     時間: <span id="time">-</span><br>
     座標: <span id="coords">-</span><br>
     <label><input type="checkbox" id="autoCenter" checked> 自動跟隨</label>
@@ -29,70 +30,72 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
 <script type="module">
+    // 修正：補上 onChildAdded 的 import
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-    import { getDatabase, ref, onValue } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
+    import { getDatabase, ref, onValue, onChildAdded } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
 
-    // --- 1. 從網址抓取參數 ---
+    // --- 1. 從網址抓取所有動態參數 ---
     const urlParams = new URLSearchParams(window.location.search);
-    const projectId = urlParams.get('id') || "test";
-    const apiKey = "AIzaSyCjPnL5my8NsG7XYCbABGh45KtKM9s4SlI";
+    
+    // 專案資訊
+    const projectId = urlParams.get('id') || "real-time-gps-84c8a";
+    const apiKey = urlParams.get('key') || "AIzaSyCjPnL5my8NsG7XYCbABGh45KtKM9s4SlI";
+    const dbPath = urlParams.get('path') || "test"; 
+    const dbURL = urlParams.get('db') || `https://${projectId}-default-rtdb.asia-southeast1.firebasedatabase.app`;
+
+    document.getElementById('currentPath').innerText = dbPath;
 
     // --- 2. 動態組合 Config ---
     const firebaseConfig = {
         apiKey: apiKey,
         authDomain: `${projectId}.firebaseapp.com`,
-        databaseURL: `https://${projectId}-default-rtdb.firebaseio.com`,
+        databaseURL: dbURL,
         projectId: projectId,
-        storageBucket: `${projectId}.appspot.com`,
+        storageBucket: `${projectId}.firebasestorage.app`,
     };
 
     const app = initializeApp(firebaseConfig);
     const db = getDatabase(app);
 
-    // 初始化地圖 (預設座標設在台北)
+    // 初始化地圖
     const map = L.map('map').setView([25.0330, 121.5654], 16);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         attribution: '© OpenStreetMap contributors'
     }).addTo(map);
 
-    // --- 新增：定義自訂的小人圖示 ---
+    // 定義小人圖示
     const personIcon = L.icon({
-        // 這裡先用一個網路上的範例圖片，你可以換成自己的
         iconUrl: './man-walking.png', 
-        
-        iconSize:     [40, 40], // 圖示的寬度和高度 [寬, 高]
-        iconAnchor:   [20, 38], // 重要！設定圖示的「腳尖」對應到地圖的哪裡。
-                                // 通常是 [寬度的一半, 高度]，讓小人穩穩站在座標點上。
-        popupAnchor:  [0, -40]  // 彈出視窗相對於圖示中心的位置 (通常在頭頂)
+        iconSize:     [40, 40],
+        iconAnchor:   [20, 38],
+        popupAnchor:  [0, -40]
     });
 
-    // --- 修改：建立標記時，加入 {icon: personIcon} 選項 ---
     // 準備標記與路徑線
-    let marker = L.marker([0, 0], { icon: personIcon }).addTo(map).bindPopup("目前位置");
+    let marker = L.marker([0, 0], { icon: personIcon }).addTo(map).bindPopup(`目前位置 (${dbPath})`);
     let pathLine = L.polyline([], {color: 'blue', weight: 4}).addTo(map);
     let coordsArray = [];
 
-    // 1. 監聽 Latest (即時點)
-    const latestRef = ref(db, 'test/latest');
+    // --- 3. 監聽邏輯 (改為使用動態路徑 dbPath) ---
+
+    // 1. 監聽 Latest
+    const latestRef = ref(db, `${dbPath}/latest`);
     onValue(latestRef, (snapshot) => {
         const data = snapshot.val();
         if (data) {
             const pos = [data.lat, data.lon];
             marker.setLatLng(pos);
-            
-            // 更新介面資訊
             document.getElementById('time').innerText = data.timestamp;
             document.getElementById('coords').innerText = `${data.lat.toFixed(5)}, ${data.lon.toFixed(5)}`;
 
-            // 如果勾選自動跟隨，地圖隨人動
             if (document.getElementById('autoCenter').checked) {
                 map.panTo(pos);
             }
         }
     });
 
-    // 2. 監聽 History (歷史路徑)
-    const historyRef = ref(db, 'test/history');
+    // 2. 監聽 History
+    const historyRef = ref(db, `${dbPath}/history`);
     onChildAdded(historyRef, (snapshot) => {
         const data = snapshot.val();
         if (data) {
