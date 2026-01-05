@@ -22,7 +22,7 @@
     專案: <span id="currentPath" style="color: blue;">-</span><br>
     時間: <span id="time">-</span><br>
     座標: <span id="coords">-</span><br>
-    連線: <span id="connection-status" style="color: gray;">等待連線...</span><br>
+    連線: <span id="connection-status" style="color: gray;"> 未連線</span><br>
     <label><input type="checkbox" id="autoCenter" checked> 自動跟隨</label>
 </div>
 
@@ -99,26 +99,39 @@
 
     // 1. 監聽 Latest
     const latestRef = ref(db, `${dbPath}/latest`);
+    let lastValidTime = 0;
+
     onValue(latestRef, (snapshot) => {
         const data = snapshot.val();
-        if (data) {
-            // A. 只要有資料進來，代表發送端正常
-            updateStatus("連線正常", "green");
+        if (data && data.timestamp) {
+            // 1. 取得現在的 Unix 時間 (秒)
+            const now = Math.floor(Date.now() / 1000);
             
-            // B. 重置計時器：先清除舊的，再設一個新的 5 秒倒數
-            clearTimeout(lastUpdateTimer);
-            lastUpdateTimer = setTimeout(() => {
-                updateStatus("數據停止更新", "red");
-            }, 5000);
+            // 2. 取得資料的時間 (建議 Python 傳送 time.time() 的數值)
+            // 如果你傳的是字串 "2026-01-05..."，請用 Date.parse(data.timestamp)/1000 轉換
+            const dataTime = typeof data.timestamp === 'number' 
+                            ? data.timestamp 
+                            : Math.floor(Date.parse(data.timestamp) / 1000);
 
-            // C. 原本的更新地圖邏輯 (標記移動、面板更新等)
-            const pos = [data.lat, data.lon];
-            marker.setLatLng(pos);
-            document.getElementById('time').innerText = data.timestamp;
-            document.getElementById('coords').innerText = `${data.lat.toFixed(5)}, ${data.lon.toFixed(5)}`;
-            if (document.getElementById('autoCenter').checked) {
-                map.panTo(pos);
+            // 3. 判斷資料是否「新鮮」 (5 秒內產生的才算連線中)
+            if (Math.abs(now - dataTime) < 5) {
+                updateStatus("連線正常", "green");
+                
+                // 正常更新地圖與標記
+                const pos = [data.lat, data.lon];
+                marker.setLatLng(pos);
+                
+                // 重置倒數計時器
+                clearTimeout(lastUpdateTimer);
+                lastUpdateTimer = setTimeout(() => {
+                    updateStatus("數據停止更新", "red");
+                }, 5000);
+            } else {
+                // 資料太舊，顯示等待中
+                updateStatus("等待連線中...", "orange");
             }
+        } else {
+            updateStatus("未連線", "gray");
         }
     });
 
@@ -135,5 +148,4 @@
 
 </script>
 </body>
-
 </html>
