@@ -22,7 +22,7 @@
     專案: <span id="currentPath" style="color: blue;">-</span><br>
     時間: <span id="time">-</span><br>
     座標: <span id="coords">-</span><br>
-    連線: <span id="connection-status" style="color: gray;">檢查中...</span><br>
+    連線: <span id="connection-status" style="color: gray;">等待連線...</span><br>
     <label><input type="checkbox" id="autoCenter" checked> 自動跟隨</label>
 </div>
 
@@ -71,7 +71,7 @@
     const connectedRef = ref(db, ".info/connected");
     onValue(connectedRef, (snap) => {
         if (snap.val() === false) {
-            updateStatus("正在嘗試連線至資料庫...", "orange");
+            updateStatus("正在嘗試連線...", "orange");
         }
         // 注意：這裡不設為綠色，因為連上資料庫不代表 Python 有在傳資料
     });
@@ -108,7 +108,7 @@
             // B. 重置計時器：先清除舊的，再設一個新的 5 秒倒數
             clearTimeout(lastUpdateTimer);
             lastUpdateTimer = setTimeout(() => {
-                updateStatus("數據停止更新 (Python 可能已關閉)", "red");
+                updateStatus("數據停止更新 (連線異常或移動距離過短)", "red");
             }, 5000);
 
             // C. 原本的更新地圖邏輯 (標記移動、面板更新等)
@@ -121,7 +121,7 @@
             }
         }
     });
-    
+
     // 2. 監聽 History
     const historyRef = ref(db, `${dbPath}/history`);
     onChildAdded(historyRef, (snapshot) => {
