@@ -22,6 +22,7 @@
     專案: <span id="currentPath" style="color: blue;">-</span><br>
     時間: <span id="time">-</span><br>
     座標: <span id="coords">-</span><br>
+    連線: <span id="connection-status" style="color: gray;">檢查中...</span><br>
     <label><input type="checkbox" id="autoCenter" checked> 自動跟隨</label>
 </div>
 
@@ -30,7 +31,6 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
 <script type="module">
-    // 修正：補上 onChildAdded 的 import
     import {initializeApp} from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
     import {getDatabase, ref, onValue, onChildAdded} from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
 
@@ -56,6 +56,25 @@
 
     const app = initializeApp(firebaseConfig);
     const db = getDatabase(app);
+
+    let lastUpdateTimer;
+    const statusEl = document.getElementById('connection-status');
+
+    function updateStatus(msg, color) {
+        if (statusEl) {
+            statusEl.innerText = msg;
+            statusEl.style.color = color;
+        }
+    }
+
+    // --- 監聽 Firebase 核心連線狀態 ---
+    const connectedRef = ref(db, ".info/connected");
+    onValue(connectedRef, (snap) => {
+        if (snap.val() === false) {
+            updateStatus("正在嘗試連線至資料庫...", "orange");
+        }
+        // 注意：這裡不設為綠色，因為連上資料庫不代表 Python 有在傳資料
+    });
 
     // 初始化地圖
     const map = L.map('map').setView([25.0330, 121.5654], 16);
@@ -83,17 +102,26 @@
     onValue(latestRef, (snapshot) => {
         const data = snapshot.val();
         if (data) {
+            // A. 只要有資料進來，代表發送端正常
+            updateStatus("連線正常", "green");
+            
+            // B. 重置計時器：先清除舊的，再設一個新的 5 秒倒數
+            clearTimeout(lastUpdateTimer);
+            lastUpdateTimer = setTimeout(() => {
+                updateStatus("數據停止更新 (Python 可能已關閉)", "red");
+            }, 5000);
+
+            // C. 原本的更新地圖邏輯 (標記移動、面板更新等)
             const pos = [data.lat, data.lon];
             marker.setLatLng(pos);
             document.getElementById('time').innerText = data.timestamp;
             document.getElementById('coords').innerText = `${data.lat.toFixed(5)}, ${data.lon.toFixed(5)}`;
-
             if (document.getElementById('autoCenter').checked) {
                 map.panTo(pos);
             }
         }
     });
-
+    
     // 2. 監聽 History
     const historyRef = ref(db, `${dbPath}/history`);
     onChildAdded(historyRef, (snapshot) => {
