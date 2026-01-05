@@ -108,7 +108,7 @@
             // B. 重置計時器：先清除舊的，再設一個新的 5 秒倒數
             clearTimeout(lastUpdateTimer);
             lastUpdateTimer = setTimeout(() => {
-                updateStatus("數據停止更新 (連線異常或移動距離過短)", "red");
+                updateStatus("數據停止更新", "red");
             }, 5000);
 
             // C. 原本的更新地圖邏輯 (標記移動、面板更新等)
@@ -135,4 +135,5 @@
 
 </script>
 </body>
+
 </html>
