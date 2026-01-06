@@ -10,9 +10,20 @@
         #map { height: 100vh; width: 100%; }
         .info-panel {
             position: absolute; top: 10px; right: 10px; z-index: 1000;
-            background: rgba(255, 255, 255, 0.9); padding: 12px; border-radius: 8px;
+            background: rgba(255, 255, 255, 0.95); padding: 15px; border-radius: 8px;
             box-shadow: 0 0 10px rgba(0,0,0,0.2); font-family: sans-serif;
+            min-width: 200px;
         }
+        /* 新增：狀態燈號樣式 */
+        .status-dot {
+            display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+            margin-right: 5px; background-color: gray;
+        }
+        .st-active { background-color: #28a745; box-shadow: 0 0 5px #28a745; } /* 綠燈 */
+        .st-connecting { background-color: #ffc107; animation: blink 1s infinite; } /* 黃燈閃爍 */
+        .st-offline { background-color: #dc3545; } /* 紅燈 */
+        
+        @keyframes blink { 50% { opacity: 0.5; } }
     </style>
 </head>
 <body>
@@ -20,9 +31,15 @@
 <div class="info-panel">
     <b>GPS 狀態監控</b><br>
     專案: <span id="currentPath" style="color: blue;">-</span><br>
-    時間: <span id="time">-</span><br>
+    
+    <div style="margin-top: 5px; padding: 5px; background: #f8f9fa; border-radius: 4px;">
+        <span id="status-dot" class="status-dot st-offline"></span>
+        <span id="connection-text" style="font-weight: bold; color: gray;">未連線</span><br>
+        <small id="status-msg" style="color: #666; font-size: 12px;">等待訊號...</small>
+    </div>
+
     座標: <span id="coords">-</span><br>
-    連線: <span id="connection-status" style="color: gray;">● 未連線</span><br>
+    時間: <span id="time">-</span><br>
     <label><input type="checkbox" id="autoCenter" checked> 自動跟隨</label>
 </div>
 
@@ -34,18 +51,15 @@
     import {initializeApp} from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
     import {getDatabase, ref, onValue, onChildAdded} from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
 
-    // --- 1. 從網址抓取所有動態參數 ---
+    // --- 1. 參數設定 ---
     const urlParams = new URLSearchParams(window.location.search);
-    
-    // 專案資訊
     const projectId = urlParams.get('id') || "real-time-gps-84c8a";
-    const apiKey = urlParams.get('key') || "AIzaSyCjPnL5my8NsG7XYCbABGh45KtKM9s4SlI";
+    const apiKey = urlParams.get('key') || "AIzaSyCjPnL5my8NsG7XYCbABGh45KtKM9s4SlI"; // 請確認 Key 是否正確
     const dbPath = urlParams.get('path') || "test_project"; 
     const dbURL = urlParams.get('db') || `https://${projectId}-default-rtdb.asia-southeast1.firebasedatabase.app`;
 
     document.getElementById('currentPath').innerText = dbPath;
 
-    // --- 2. 動態組合 Config ---
     const firebaseConfig = {
         apiKey: apiKey,
         authDomain: `${projectId}.firebaseapp.com`,
@@ -57,81 +71,99 @@
     const app = initializeApp(firebaseConfig);
     const db = getDatabase(app);
 
-    // 初始化地圖
+    // --- 2. 地圖初始化 ---
     const map = L.map('map').setView([25.0330, 121.5654], 16);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         attribution: '© OpenStreetMap contributors'
     }).addTo(map);
 
-    // 定義小人圖示
     const personIcon = L.icon({
-        iconUrl: './man-walking.png', 
+        iconUrl: './man-walking.png', // 確認圖片路徑是否正確，若無圖片可暫時拿掉這行用預設
         iconSize:     [40, 40],
         iconAnchor:   [20, 38],
         popupAnchor:  [0, -40]
     });
 
-    // 準備標記與路徑線
     let marker = L.marker([0, 0], { icon: personIcon }).addTo(map);
     let pathLine = L.polyline([], {color: 'blue', weight: 4}).addTo(map);
     let coordsArray = [];
-    let lastUpdateTimer;
 
-    // --- 4. 輔助函式：狀態更新 ---
-    function updateStatus(msg, color) {
-        const el = document.getElementById('connection-status');
-        el.innerText = msg;
-        el.style.color = color;
+    // --- 3. 狀態管理邏輯 (核心修改) ---
+    const statusDot = document.getElementById('status-dot');
+    const statusText = document.getElementById('connection-text');
+    const statusMsg = document.getElementById('status-msg');
+
+    let lastHeartbeat = 0;      // 上次後端更新時間
+    let backendState = 'offline'; // 後端宣稱的狀態
+    const TIMEOUT_MS = 5000;    // 5秒沒心跳就當作斷線
+
+    // 更新 UI 的輔助函式
+    function updateUI(state, text, msg) {
+        // 清除舊燈號
+        statusDot.classList.remove('st-active', 'st-connecting', 'st-offline');
+        
+        if (state === 'active') {
+            statusDot.classList.add('st-active');
+            statusText.style.color = '#28a745';
+        } else if (state === 'connecting') {
+            statusDot.classList.add('st-connecting');
+            statusText.style.color = '#d39e00';
+        } else {
+            statusDot.classList.add('st-offline');
+            statusText.style.color = '#dc3545';
+        }
+
+        statusText.innerText = text;
+        statusMsg.innerText = msg;
     }
 
-    // --- 5. 核心監聽邏輯 ---
-    const latestRef = ref(db, `${dbPath}/latest`);
-
-    onValue(latestRef, (snapshot) => {
+    // A. 監聽後端 Status 節點
+    const statusRef = ref(db, `${dbPath}/status`);
+    onValue(statusRef, (snapshot) => {
         const data = snapshot.val();
-        if (data && data.timestamp) {
-            // A. 時間計算
-            const now = Date.now() / 1000; // 網頁現在時間 (秒)
-            const dataTime = data.timestamp; // Python 傳來的 time.time()
+        if (data) {
+            lastHeartbeat = data.last_updated;
+            backendState = data.state;
+            // 收到更新時，直接顯示後端給的狀態
+            let displayState = data.state;
+            let displayText = (data.state === 'active') ? '連線正常' : 
+                              (data.state === 'connecting') ? '連線中' : '未連線';
             
-            // B. 將 Unix 秒數轉換為人類可讀字串 (解決你的數字顯示問題)
-            const dateObj = new Date(dataTime * 1000);
-            const timeString = dateObj.toLocaleString('zh-TW', { hour12: false });
-
-            // C. 新鮮度判斷 (5秒規則)
-            const isLive = Math.abs(now - dataTime) < 5;
-
-            // D. 更新 UI 文字
-            document.getElementById('time').innerText = timeString;
-            document.getElementById('coords').innerText = `${data.lat.toFixed(5)}, ${data.lon.toFixed(5)}`;
-
-            // E. 更新狀態燈號
-            if (isLive) {
-                updateStatus("● 連線正常 (Live)", "green");
-                
-                // 重置「停止更新」計時器
-                clearTimeout(lastUpdateTimer);
-                lastUpdateTimer = setTimeout(() => {
-                    updateStatus("● 數據停止更新", "red");
-                }, 5000);
-            } else {
-                updateStatus("● 等待連線中 (舊資料)", "orange");
-            }
-
-            // F. 無論新舊都更新地圖位置
-            const pos = [data.lat, data.lon];
-            marker.setLatLng(pos);
-            
-            // 自動跟隨
-            if (document.getElementById('autoCenter').checked) {
-                map.panTo(pos);
-            }
-        } else {
-            updateStatus("● 等待連線中", "orange");
+            updateUI(displayState, displayText, data.message || '');
         }
     });
 
-    // 歷史路徑繪製
+    // B. 前端守門員 (Watchdog) - 每秒檢查一次是否逾時
+    setInterval(() => {
+        const now = Date.now();
+        // 如果後端說自己是 connecting 或 active，但超過 5 秒沒更新時間戳記 -> 強制判定斷線
+        if (backendState !== 'offline' && (now - lastHeartbeat > TIMEOUT_MS)) {
+            updateUI('offline', '連線中斷', '訊號逾時 (Backend Timeout)');
+        }
+    }, 1000);
+
+
+    // --- 4. 座標更新邏輯 ---
+    const latestRef = ref(db, `${dbPath}/latest`);
+    onValue(latestRef, (snapshot) => {
+        const data = snapshot.val();
+        if (data && data.lat) {
+            // 更新文字資訊
+            const dateObj = new Date(data.timestamp * 1000);
+            document.getElementById('time').innerText = dateObj.toLocaleTimeString('zh-TW', { hour12: false });
+            document.getElementById('coords').innerText = `${data.lat.toFixed(5)}, ${data.lon.toFixed(5)}`;
+
+            // 更新地圖
+            const pos = [data.lat, data.lon];
+            marker.setLatLng(pos);
+            
+            if (document.getElementById('autoCenter').checked) {
+                map.panTo(pos);
+            }
+        }
+    });
+
+    // --- 5. 歷史路徑 ---
     const historyRef = ref(db, `${dbPath}/history`);
     onChildAdded(historyRef, (snapshot) => {
         const data = snapshot.val();
@@ -144,8 +176,4 @@
 
 </script>
 </body>
-
 </html>
-
-
-
