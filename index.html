@@ -128,28 +128,24 @@
             lastHeartbeat = data.last_updated;
             backendState = data.state;
             
-            // 判斷顯示文字
             let displayText = '未連線';
-            if (data.state === 'active') displayText = '連線正常';
-            else if (data.state === 'connecting') displayText = '連線中';
-            else if (data.state === 'offline') displayText = '程式已停止'; // ✨ 這裡改為「程式已停止」
+            let displayState = data.state;
 
-            // 只要後端有更新，就優先顯示後端的狀態
-            updateUI(data.state, displayText, data.message || '');
+            // --- 狀態判讀邏輯 ---
+            if (data.state === 'active') {
+                displayText = '連線正常';
+            } else if (data.state === 'connecting') {
+                displayText = '連線中';
+            } else if (data.state === 'offline') {
+                displayText = '程式已停止'; // 手動關閉顯示這個
+            } else if (data.state === 'timeout') {
+                displayText = '連線逾時';   // 後端通知的逾時顯示這個
+                displayState = 'timeout';   // 確保觸發紅色閃爍樣式
+            }
+            
+            updateUI(displayState, displayText, data.message || '');
         }
     });
-
-    // B. 前端守門員 (處理「連線逾時」)
-    setInterval(() => {
-        const now = Date.now();
-        
-        // 條件：後端狀態不是 "offline" (代表它覺得自己還活著)，但時間戳記已經過期
-        if (backendState !== 'offline' && (now - lastHeartbeat > TIMEOUT_MS)) {
-            // ✨ 這裡強制改為「連線逾時」
-            updateUI('timeout', '連線逾時', '訊號中斷 (No Heartbeat)');
-        }
-    }, 1000);
-
 
     // --- 4. 座標更新 ---
     const latestRef = ref(db, `${dbPath}/latest`);
