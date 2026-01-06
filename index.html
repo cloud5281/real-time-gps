@@ -40,7 +40,7 @@
     // 專案資訊
     const projectId = urlParams.get('id') || "real-time-gps-84c8a";
     const apiKey = urlParams.get('key') || "AIzaSyCjPnL5my8NsG7XYCbABGh45KtKM9s4SlI";
-    const dbPath = urlParams.get('path') || "test-project"; 
+    const dbPath = urlParams.get('path') || "test_project"; 
     const dbURL = urlParams.get('db') || `https://${projectId}-default-rtdb.asia-southeast1.firebasedatabase.app`;
 
     document.getElementById('currentPath').innerText = dbPath;
@@ -146,4 +146,5 @@
 </body>
 
 </html>
+
 
