@@ -14,16 +14,16 @@
             box-shadow: 0 0 10px rgba(0,0,0,0.2); font-family: sans-serif;
             min-width: 200px;
         }
-        /* 新增：狀態燈號樣式 */
         .status-dot {
             display: inline-block; width: 10px; height: 10px; border-radius: 50%;
             margin-right: 5px; background-color: gray;
         }
-        .st-active { background-color: #28a745; box-shadow: 0 0 5px #28a745; } /* 綠燈 */
-        .st-connecting { background-color: #ffc107; animation: blink 1s infinite; } /* 黃燈閃爍 */
-        .st-offline { background-color: #dc3545; } /* 紅燈 */
+        .st-active { background-color: #28a745; box-shadow: 0 0 5px #28a745; }
+        .st-connecting { background-color: #ffc107; animation: blink 1s infinite; }
+        .st-offline { background-color: #dc3545; }
+        .st-timeout { background-color: #dc3545; animation: blink 0.5s infinite; } /* 新增：逾時快閃紅燈 */
         
-        @keyframes blink { 50% { opacity: 0.5; } }
+        @keyframes blink { 50% { opacity: 0.4; } }
     </style>
 </head>
 <body>
@@ -54,7 +54,7 @@
     // --- 1. 參數設定 ---
     const urlParams = new URLSearchParams(window.location.search);
     const projectId = urlParams.get('id') || "real-time-gps-84c8a";
-    const apiKey = urlParams.get('key') || "AIzaSyCjPnL5my8NsG7XYCbABGh45KtKM9s4SlI"; // 請確認 Key 是否正確
+    const apiKey = urlParams.get('key') || "AIzaSyCjPnL5my8NsG7XYCbABGh45KtKM9s4SlI";
     const dbPath = urlParams.get('path') || "test_project"; 
     const dbURL = urlParams.get('db') || `https://${projectId}-default-rtdb.asia-southeast1.firebasedatabase.app`;
 
@@ -78,7 +78,7 @@
     }).addTo(map);
 
     const personIcon = L.icon({
-        iconUrl: './man-walking.png', // 確認圖片路徑是否正確，若無圖片可暫時拿掉這行用預設
+        iconUrl: './man-walking.png',
         iconSize:     [40, 40],
         iconAnchor:   [20, 38],
         popupAnchor:  [0, -40]
@@ -88,19 +88,17 @@
     let pathLine = L.polyline([], {color: 'blue', weight: 4}).addTo(map);
     let coordsArray = [];
 
-    // --- 3. 狀態管理邏輯 (核心修改) ---
+    // --- 3. 狀態管理邏輯 ---
     const statusDot = document.getElementById('status-dot');
     const statusText = document.getElementById('connection-text');
     const statusMsg = document.getElementById('status-msg');
 
-    let lastHeartbeat = 0;      // 上次後端更新時間
-    let backendState = 'offline'; // 後端宣稱的狀態
-    const TIMEOUT_MS = 5000;    // 5秒沒心跳就當作斷線
+    let lastHeartbeat = 0;
+    let backendState = 'offline';
+    const TIMEOUT_MS = 5000; // 5秒判斷逾時
 
-    // 更新 UI 的輔助函式
     function updateUI(state, text, msg) {
-        // 清除舊燈號
-        statusDot.classList.remove('st-active', 'st-connecting', 'st-offline');
+        statusDot.classList.remove('st-active', 'st-connecting', 'st-offline', 'st-timeout');
         
         if (state === 'active') {
             statusDot.classList.add('st-active');
@@ -108,52 +106,60 @@
         } else if (state === 'connecting') {
             statusDot.classList.add('st-connecting');
             statusText.style.color = '#d39e00';
-        } else {
-            statusDot.classList.add('st-offline');
+        } else if (state === 'timeout') {
+            // 新增：逾時專用樣式
+            statusDot.classList.add('st-timeout');
             statusText.style.color = '#dc3545';
+        } else {
+            // 手動停止 (offline)
+            statusDot.classList.add('st-offline');
+            statusText.style.color = 'gray';
         }
 
         statusText.innerText = text;
         statusMsg.innerText = msg;
     }
 
-    // A. 監聽後端 Status 節點
+    // A. 監聽後端 (處理「手動停止」與「正常連線」)
     const statusRef = ref(db, `${dbPath}/status`);
     onValue(statusRef, (snapshot) => {
         const data = snapshot.val();
         if (data) {
             lastHeartbeat = data.last_updated;
             backendState = data.state;
-            // 收到更新時，直接顯示後端給的狀態
-            let displayState = data.state;
-            let displayText = (data.state === 'active') ? '連線正常' : 
-                              (data.state === 'connecting') ? '連線中' : '未連線';
             
-            updateUI(displayState, displayText, data.message || '');
+            // 判斷顯示文字
+            let displayText = '未連線';
+            if (data.state === 'active') displayText = '連線正常';
+            else if (data.state === 'connecting') displayText = '連線中';
+            else if (data.state === 'offline') displayText = '程式已停止'; // ✨ 這裡改為「程式已停止」
+
+            // 只要後端有更新，就優先顯示後端的狀態
+            updateUI(data.state, displayText, data.message || '');
         }
     });
 
-    // B. 前端守門員 (Watchdog) - 每秒檢查一次是否逾時
+    // B. 前端守門員 (處理「連線逾時」)
     setInterval(() => {
         const now = Date.now();
-        // 如果後端說自己是 connecting 或 active，但超過 5 秒沒更新時間戳記 -> 強制判定斷線
+        
+        // 條件：後端狀態不是 "offline" (代表它覺得自己還活著)，但時間戳記已經過期
         if (backendState !== 'offline' && (now - lastHeartbeat > TIMEOUT_MS)) {
-            updateUI('offline', '連線中斷', '訊號逾時 (Backend Timeout)');
+            // ✨ 這裡強制改為「連線逾時」
+            updateUI('timeout', '連線逾時', '訊號中斷 (No Heartbeat)');
         }
     }, 1000);
 
 
-    // --- 4. 座標更新邏輯 ---
+    // --- 4. 座標更新 ---
     const latestRef = ref(db, `${dbPath}/latest`);
     onValue(latestRef, (snapshot) => {
         const data = snapshot.val();
         if (data && data.lat) {
-            // 更新文字資訊
             const dateObj = new Date(data.timestamp * 1000);
             document.getElementById('time').innerText = dateObj.toLocaleTimeString('zh-TW', { hour12: false });
             document.getElementById('coords').innerText = `${data.lat.toFixed(5)}, ${data.lon.toFixed(5)}`;
 
-            // 更新地圖
             const pos = [data.lat, data.lon];
             marker.setLatLng(pos);
             
