@@ -95,7 +95,16 @@
 
     let lastHeartbeat = 0;
     let backendState = 'offline';
-    const TIMEOUT_MS = 5000; // 5秒判斷逾時
+
+    // 暫存座標用
+    let cachedLat = 0;
+    let cachedLon = 0;
+
+    // ✨ 邏輯一：時間永遠在走 (獨立於 Firebase)
+    setInterval(() => {
+        const now = new Date();
+        timeDisplay.innerText = now.toLocaleTimeString('zh-TW', { hour12: false });
+    }, 1000);
 
     function updateUI(state, text, msg) {
         statusDot.classList.remove('st-active', 'st-connecting', 'st-offline', 'st-timeout');
@@ -118,6 +127,14 @@
 
         statusText.innerText = text;
         statusMsg.innerText = msg;
+
+        if (state === 'active') {
+            coordsDisplay.innerText = `${cachedLat.toFixed(6}, ${cachedLon.toFixed(6}`;
+            marker.setOpacity(1.0); 
+        } else {
+            coordsDisplay.innerText = "-";
+            marker.setOpacity(0.5); // 斷線時小人變半透明
+        }
     }
 
     // A. 監聽後端 (處理「手動停止」與「正常連線」)
@@ -137,7 +154,7 @@
             } else if (data.state === 'connecting') {
                 displayText = '連線中';
             } else if (data.state === 'offline') {
-                displayText = '程式已停止'; // 手動關閉顯示這個
+                displayText = '正常停止運作'; // 手動關閉顯示這個
             } else if (data.state === 'timeout') {
                 displayText = '連線逾時';   // 後端通知的逾時顯示這個
                 displayState = 'timeout';   // 確保觸發紅色閃爍樣式
@@ -152,10 +169,9 @@
     onValue(latestRef, (snapshot) => {
         const data = snapshot.val();
         if (data && data.lat) {
-            const dateObj = new Date(data.timestamp * 1000);
-            document.getElementById('time').innerText = dateObj.toLocaleTimeString('zh-TW', { hour12: false });
-            document.getElementById('coords').innerText = `${data.lat.toFixed(5)}, ${data.lon.toFixed(5)}`;
-
+            if (backendState === 'active') {
+                document.getElementById('coords').innerText = `${data.lat.toFixed(5)}, ${data.lon.toFixed(5)}`;
+            }
             const pos = [data.lat, data.lon];
             marker.setLatLng(pos);
             
@@ -178,4 +194,4 @@
 
 </script>
 </body>
-</html>v
+</html>
