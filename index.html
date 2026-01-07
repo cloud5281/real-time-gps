@@ -98,17 +98,6 @@
         // A. 更新時間 (永遠照跑)
         const now = new Date();
         document.getElementById('time').innerText = now.toLocaleTimeString('zh-TW', { hour12: false });
-    
-        // B. 根據狀態決定座標顯示
-        const coordsEl = document.getElementById('coords');
-        if (backendState === 'active' && lastGpsData) {
-            // 只有在 active 狀態下才顯示真實座標
-            coordsEl.innerText = `${lastGpsData.lat.toFixed(5)}, ${lastGpsData.lon.toFixed(5)}`;
-            coordsEl.style.color = "black";
-        } else {
-            // 其他任何狀態 (connecting, timeout, offline) 都顯示 "-"
-            coordsEl.innerText = "-";
-        }
     }
     
     // 啟動定時器：每 1000 毫秒 (1秒) 強制更新一次介面
@@ -124,10 +113,18 @@
             backendState = data.state;
             
             let displayText = '未連線';
-            if (data.state === 'active') displayText = '連線正常';
-            else if (data.state === 'connecting') displayText = '等待訊號';
+            const coordsEl = document.getElementById('coords');
+            coordsEl.innerText = "-";
+
+            if (data.state === 'active') {
+                displayText = '連線正常';
+                if (lastGpsData) {
+                    coordsEl.innerText = `${lastGpsData.lat.toFixed(5)}, ${lastGpsData.lon.toFixed(5)}`;
+                }
+            }    
+            else if (data.state === 'connecting') displayText = '連線中...';
             else if (data.state === 'timeout') displayText = '連線逾時';
-            else if (data.state === 'offline') displayText = '服務停止';
+            else if (data.state === 'offline') displayText = '程式已停止運作';
     
             updateStatusDot(data.state, displayText, data.message || '');
         }
@@ -181,4 +178,3 @@
 </script>
 </body>
 </html>
-
