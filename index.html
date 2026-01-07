@@ -3,16 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>GPS Tracker</title>
+    <title>GPS Tracker - Pro</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
-        body, html { margin: 0; padding: 0; height: 100%; }
+        body, html { margin: 0; padding: 0; height: 100%; font-family: sans-serif; }
         #map { height: 100vh; width: 100%; }
         .info-panel {
             position: absolute; top: 10px; right: 10px; z-index: 1000;
             background: rgba(255, 255, 255, 0.95); padding: 15px; border-radius: 8px;
-            box-shadow: 0 0 10px rgba(0,0,0,0.2); font-family: sans-serif;
-            min-width: 200px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.2); min-width: 220px;
         }
         .status-dot {
             display: inline-block; width: 10px; height: 10px; border-radius: 50%;
@@ -21,26 +20,28 @@
         .st-active { background-color: #28a745; box-shadow: 0 0 5px #28a745; }
         .st-connecting { background-color: #ffc107; animation: blink 1s infinite; }
         .st-offline { background-color: #dc3545; }
-        .st-timeout { background-color: #dc3545; animation: blink 0.5s infinite; } /* 新增：逾時快閃紅燈 */
+        .st-timeout { background-color: #dc3545; animation: blink 0.5s infinite; }
         
         @keyframes blink { 50% { opacity: 0.4; } }
+        .coord-val { font-weight: bold; transition: color 0.3s; }
     </style>
 </head>
 <body>
 
 <div class="info-panel">
-    <b>GPS 狀態監控</b><br>
-    
-    <div style="margin-top: 5px; padding: 5px; background: #f8f9fa; border-radius: 4px;">
-        <span id="status-dot" class="status-dot st-offline"></span>
-        <span id="connection-text" style="font-weight: bold; color: gray;">未連線</span><br>
-        <small id="status-msg" style="color: #666; font-size: 12px;">等待訊號...</small>
+    <b>GPS 系統狀態</b>
+    <div style="margin: 8px 0; padding: 8px; background: #f8f9fa; border-radius: 4px; border-left: 4px solid #ccc;">
+        <span id="status-dot" class="status-dot"></span>
+        <span id="connection-text" style="font-weight: bold;">讀取中...</span><br>
+        <small id="status-msg" style="color: #666; font-size: 11px;">正在初始化...</small>
     </div>
 
-    專案: <span id="currentPath" style="color: blue;">-</span><br>
-    座標: <span id="coords">-</span><br>
-    時間: <span id="time">-</span><br>
-    <label><input type="checkbox" id="autoCenter" checked> 自動跟隨</label>
+    <div style="line-height: 1.6; font-size: 14px;">
+        專案: <span id="currentPath" style="color: blue;">-</span><br>
+        座標: <span id="coords" class="coord-val">-</span><br>
+        時間: <span id="time" style="color: #444;">-</span><br>
+        <label style="cursor: pointer;"><input type="checkbox" id="autoCenter" checked> 自動對焦新數據</label>
+    </div>
 </div>
 
 <div id="map"></div>
@@ -48,138 +49,96 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
 <script type="module">
-    import {initializeApp} from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-    import {getDatabase, ref, onValue, onChildAdded} from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+    import { getDatabase, ref, onValue, onChildAdded, get } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
 
-    // --- 1. 參數設定 ---
+    // --- 1. 初始化設定 ---
     const urlParams = new URLSearchParams(window.location.search);
-    const projectId = urlParams.get('id') || "real-time-gps-84c8a";
-    const apiKey = urlParams.get('key') || "AIzaSyCjPnL5my8NsG7XYCbABGh45KtKM9s4SlI";
-    const dbPath = urlParams.get('path') || "test_project"; 
-    const dbURL = urlParams.get('db') || `https://${projectId}-default-rtdb.asia-southeast1.firebasedatabase.app`;
+    const projectId = urlParams.get('id') || "你的專案ID";
+    const apiKey = urlParams.get('key') || "你的API金鑰";
+    const dbPath = urlParams.get('path') || "test_project";
+    const dbURL = `https://${projectId}-default-rtdb.asia-southeast1.firebasedatabase.app`;
 
     document.getElementById('currentPath').innerText = dbPath;
 
-    const firebaseConfig = {
-        apiKey: apiKey,
-        authDomain: `${projectId}.firebaseapp.com`,
-        databaseURL: dbURL,
-        projectId: projectId,
-        storageBucket: `${projectId}.firebasestorage.app`,
-    };
-
-    const app = initializeApp(firebaseConfig);
+    const app = initializeApp({ apiKey, databaseURL: dbURL, projectId });
     const db = getDatabase(app);
 
     // --- 2. 地圖初始化 ---
     const map = L.map('map').setView([25.0330, 121.5654], 16);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '© OpenStreetMap contributors'
-    }).addTo(map);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
     const personIcon = L.icon({
-        iconUrl: './man-walking.png',
-        iconSize:     [40, 40],
-        iconAnchor:   [20, 38],
-        popupAnchor:  [0, -40]
+        iconUrl: './man-walking.png', // 請確保圖片存在
+        iconSize: [40, 40], iconAnchor: [20, 38]
     });
 
     let marker = L.marker([0, 0], { icon: personIcon }).addTo(map);
-    let pathLine = L.polyline([], {color: 'blue', weight: 4}).addTo(map);
+    let pathLine = L.polyline([], { color: 'blue', weight: 4, opacity: 0.6 }).addTo(map);
     let coordsArray = [];
-
-    // --- 3. 狀態管理邏輯 ---
-    let lastKnownCoords = "-"; // 儲存最後一次有效的座標字串
     let backendState = 'offline';
-    let lastGpsData = null; // 儲存最後一筆 GPS 物件
-    
-    // --- 4. UI 渲染引擎 (每秒執行) ---
-    function renderUI() {
-        // A. 更新時間 (永遠照跑)
+    let lastGpsData = null;
+
+    // --- 3. 每秒更新 UI (核心需求) ---
+    setInterval(() => {
+        // A. 時間照跑 (使用本地電腦時間)
         const now = new Date();
         document.getElementById('time').innerText = now.toLocaleTimeString('zh-TW', { hour12: false });
-    
-        // B. 根據狀態決定座標顯示
+
+        // B. 根據連線狀態決定座標顯示
         const coordsEl = document.getElementById('coords');
         if (backendState === 'active' && lastGpsData) {
-            // 只有在 active 狀態下才顯示真實座標
-            coordsEl.innerText = `${lastGpsData.lat.toFixed(6}, ${lastGpsData.lon.toFixed(6)}`;
+            coordsEl.innerText = `${lastGpsData.lat.toFixed(5)}, ${lastGpsData.lon.toFixed(5)}`;
             coordsEl.style.color = "black";
         } else {
-            // 其他任何狀態 (connecting, timeout, offline) 都顯示 "-"
             coordsEl.innerText = "-";
-            coordsEl.style.color = "#ccc"; // 變灰色提示失效
+            coordsEl.style.color = "#ccc";
         }
+    }, 1000);
+
+    // --- 4. 載入歷史路徑並自動對焦 ---
+    const historyRef = ref(db, `${dbPath}/history`);
+    let isHistoryLoaded = false;
+
+    async function initHistory() {
+        const snapshot = await get(historyRef);
+        if (snapshot.exists()) {
+            const data = snapshot.val();
+            const points = Object.values(data);
+            coordsArray = points.map(p => [p.lat, p.lon]);
+            pathLine.setLatLngs(coordsArray);
+            
+            if (coordsArray.length > 0) {
+                const bounds = L.latLngBounds(coordsArray);
+                map.fitBounds(bounds, { padding: [50, 50] });
+                marker.setLatLng(coordsArray[coordsArray.length - 1]);
+            }
+        }
+        isHistoryLoaded = true;
+        
+        // 歷史載入後，開始監聽「新點」
+        onChildAdded(historyRef, (snapshot) => {
+            if (!isHistoryLoaded) return;
+            const p = snapshot.val();
+            const pos = [p.lat, p.lon];
+            coordsArray.push(pos);
+            pathLine.setLatLngs(coordsArray);
+        });
     }
-    
-    // 啟動定時器：每 1000 毫秒 (1秒) 強制更新一次介面
-    setInterval(renderUI, 1000);
-    
-    // --- 5. Firebase 監聽 ---
-    
-    // A. 監聽狀態 (控制開關)
-    const statusRef = ref(db, `${dbPath}/status`);
-    onValue(statusRef, (snapshot) => {
+    initHistory();
+
+    // --- 5. Firebase 狀態與數據更新 ---
+    // 監聽後端狀態
+    onValue(ref(db, `${dbPath}/status`), (snapshot) => {
         const data = snapshot.val();
         if (data) {
             backendState = data.state;
-            
-            let displayText = '未連線';
-            if (data.state === 'active') displayText = '連線正常';
-            else if (data.state === 'connecting') displayText = '連線中';
-            else if (data.state === 'timeout') displayText = '連線逾時';
-            else if (data.state === 'offline') displayText = '程式終止';
-    
-            updateStatusDot(data.state, displayText, data.message || '');
-        }
-    });
-    
-    // B. 監聽座標 (僅儲存數據，不直接操作 DOM)
-    const latestRef = ref(db, `${dbPath}/latest`);
-    onValue(latestRef, (snapshot) => {
-        const data = snapshot.val();
-        if (data && data.lat) {
-            lastGpsData = data; // 更新快取
-            
-            // 地圖上的 Marker 建議還是保持在最後已知位置，或者根據需求隱藏
-            const pos = [data.lat, data.lon];
-            marker.setLatLng(pos);
-            if (document.getElementById('autoCenter').checked) {
-                map.panTo(pos);
-            }
-        }
-    });
-    
-    // 輔助：更新燈號顏色
-    function updateStatusDot(state, text, msg) {
-        const statusDot = document.getElementById('status-dot');
-        const statusText = document.getElementById('connection-text');
-        const statusMsg = document.getElementById('status-msg');
-    
-        statusDot.className = 'status-dot'; // Reset
-        statusDot.classList.add(`st-${state}`);
-        
-        statusText.innerText = text;
-        statusMsg.innerText = msg;
-        
-        // 顏色微調
-        if(state === 'active') statusText.style.color = '#28a745';
-        else if(state === 'connecting') statusText.style.color = '#d39e00';
-        else statusText.style.color = 'gray';
-    }
-
-    // --- 5. 歷史路徑 ---
-    const historyRef = ref(db, `${dbPath}/history`);
-    onChildAdded(historyRef, (snapshot) => {
-        const data = snapshot.val();
-        if (data) {
-            const pos = [data.lat, data.lon];
-            coordsArray.push(pos);
-            pathLine.setLatLngs(coordsArray);
+            const dot = document.getElementById('status-dot');
+            dot.className = `status-dot st-${data.state}`;
+            document.getElementById('connection-text').innerText = 
+                data.state === 'active' ? '連線正常' : (data.state === 'connecting' ? '等待訊號' : '中斷/停止');
+            document.getElementById('status-msg').innerText = data.message || '';
         }
     });
 
-</script>
-</body>
-</html>
-
+    // 監聽
