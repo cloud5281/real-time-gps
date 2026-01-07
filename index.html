@@ -21,7 +21,7 @@
         .st-active { background-color: #28a745; box-shadow: 0 0 5px #28a745; }
         .st-connecting { background-color: #ffc107; animation: blink 1s infinite; }
         .st-offline { background-color: #dc3545; }
-        .st-timeout { background-color: #dc3545; animation: blink 0.5s infinite; } /* 新增：逾時快閃紅燈 */
+        .st-timeout { background-color: #dc3545; }
         
         @keyframes blink { 50% { opacity: 0.4; } }
     </style>
@@ -58,7 +58,7 @@
     const dbPath = urlParams.get('path') || "test_project"; 
     const dbURL = urlParams.get('db') || `https://${projectId}-default-rtdb.asia-southeast1.firebasedatabase.app`;
 
-    document.getElementById('time').innerText = new Date().toLocaleTimeString('zh-TW', { hour12: false });
+    document.getElementById('time').innerText = Date().toLocaleTimeString('zh-TW', { hour12: false });
     document.getElementById('currentPath').innerText = dbPath;
 
     const firebaseConfig = {
@@ -120,7 +120,7 @@
             if (data.state === 'active') {
                 displayText = '連線正常';
                 if (lastGpsData) {
-                    coordsEl.innerText = `${lastGpsData.lat.toFixed(5)}, ${lastGpsData.lon.toFixed(5)}`;
+                    coordsEl.innerText = `${lastGpsData.lat.toFixed(6)}, ${lastGpsData.lon.toFixed(6)}`;
                 }
             }    
             else if (data.state === 'connecting') displayText = '連線中...';
@@ -179,4 +179,3 @@
 </script>
 </body>
 </html>
-
