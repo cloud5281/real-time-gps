@@ -92,10 +92,12 @@
     const statusDot = document.getElementById('status-dot');
     const statusText = document.getElementById('connection-text');
     const statusMsg = document.getElementById('status-msg');
+    const coordsDisplay = document.getElementById('coords');
+    const timeDisplay = document.getElementById('time');
 
-    let lastHeartbeat = 0;
+    let lastMessageReceivedAt = 0; // 0 代表一開始沒資料
     let backendState = 'offline';
-
+    
     // 暫存座標用
     let cachedLat = 0;
     let cachedLon = 0;
@@ -106,9 +108,11 @@
         timeDisplay.innerText = now.toLocaleTimeString('zh-TW', { hour12: false });
     }, 1000);
 
-    function updateUI(state, text, msg) {
+    // ✨ 邏輯二：統一畫面渲染 (控制座標顯示 "-")
+    function renderPage(state, text, msg) {
         statusDot.classList.remove('st-active', 'st-connecting', 'st-offline', 'st-timeout');
         
+        // 燈號判定
         if (state === 'active') {
             statusDot.classList.add('st-active');
             statusText.style.color = '#28a745';
@@ -116,82 +120,93 @@
             statusDot.classList.add('st-connecting');
             statusText.style.color = '#d39e00';
         } else if (state === 'timeout') {
-            // 新增：逾時專用樣式
             statusDot.classList.add('st-timeout');
             statusText.style.color = '#dc3545';
         } else {
-            // 手動停止 (offline)
             statusDot.classList.add('st-offline');
             statusText.style.color = 'gray';
         }
-
         statusText.innerText = text;
         statusMsg.innerText = msg;
 
+        // 座標顯示判定 (只有 Active 才給看數字)
         if (state === 'active') {
-            coordsDisplay.innerText = `${cachedLat.toFixed(6}, ${cachedLon.toFixed(6}`;
+            coordsDisplay.innerText = `${cachedLat.toFixed(5)}, ${cachedLon.toFixed(5)}`;
             marker.setOpacity(1.0); 
         } else {
-            coordsDisplay.innerText = "-";
+            coordsDisplay.innerText = "-, -";
             marker.setOpacity(0.5); // 斷線時小人變半透明
         }
     }
 
-    // A. 監聽後端 (處理「手動停止」與「正常連線」)
+    // A. 監聽後端 Status (解決：剛開網頁顯示舊狀態)
     const statusRef = ref(db, `${dbPath}/status`);
     onValue(statusRef, (snapshot) => {
         const data = snapshot.val();
         if (data) {
-            lastHeartbeat = data.last_updated;
+            const now = Date.now();
+            
+            // 🚨 檢查資料過期：如果 Firebase 上的時間距離現在超過 10 秒，視為未連線
+            if (Math.abs(now - data.last_updated) > 10000) {
+                renderPage('offline', '未連線', '等待程式啟動...');
+                return;
+            }
+
+            // 更新收信時間
+            lastMessageReceivedAt = now;
             backendState = data.state;
             
             let displayText = '未連線';
             let displayState = data.state;
 
-            // --- 狀態判讀邏輯 ---
-            if (data.state === 'active') {
-                displayText = '連線正常';
-            } else if (data.state === 'connecting') {
-                displayText = '連線中';
-            } else if (data.state === 'offline') {
-                displayText = '正常停止運作'; // 手動關閉顯示這個
-            } else if (data.state === 'timeout') {
-                displayText = '連線逾時';   // 後端通知的逾時顯示這個
-                displayState = 'timeout';   // 確保觸發紅色閃爍樣式
+            if (data.state === 'active') displayText = '連線正常';
+            else if (data.state === 'connecting') displayText = '連線中';
+            else if (data.state === 'offline') displayText = '程式已停止';
+            else if (data.state === 'timeout') {
+                displayText = '連線逾時';
+                displayState = 'timeout';
             }
             
-            updateUI(displayState, displayText, data.message || '');
+            renderPage(displayState, displayText, data.message || '');
         }
     });
 
-    // --- 4. 座標更新 ---
+    // B. 監聽座標 Latest (解決：閃爍問題，收到座標也算活著)
     const latestRef = ref(db, `${dbPath}/latest`);
     onValue(latestRef, (snapshot) => {
         const data = snapshot.val();
         if (data && data.lat) {
-            if (backendState === 'active') {
-                document.getElementById('coords').innerText = `${data.lat.toFixed(5)}, ${data.lon.toFixed(5)}`;
-            }
+            // 只要收到座標，就重置「最後收信時間」，防止 Watchdog 亂叫
+            lastMessageReceivedAt = Date.now();
+            
+            cachedLat = data.lat;
+            cachedLon = data.lon;
+
             const pos = [data.lat, data.lon];
             marker.setLatLng(pos);
             
             if (document.getElementById('autoCenter').checked) {
                 map.panTo(pos);
             }
+            
+            // 如果後端狀態顯示 active，這裡順便刷新一下文字，確保數字即時跳動
+            if (backendState === 'active') {
+               document.getElementById('coords').innerText = `${data.lat.toFixed(5)}, ${data.lon.toFixed(5)}`;
+            }
         }
     });
 
-    // --- 5. 歷史路徑 ---
+    // D. 歷史路徑
     const historyRef = ref(db, `${dbPath}/history`);
     onChildAdded(historyRef, (snapshot) => {
         const data = snapshot.val();
         if (data) {
-            const pos = [data.lat, data.lon];
-            coordsArray.push(pos);
+            coordsArray.push([data.lat, data.lon]);
             pathLine.setLatLngs(coordsArray);
         }
     });
-
+    
 </script>
 </body>
 </html>
+
