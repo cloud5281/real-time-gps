@@ -60,30 +60,15 @@
 
     document.getElementById('currentPath').innerText = dbPath;
 
-    const firebaseConfig = {
-        apiKey: apiKey,
-        authDomain: `${projectId}.firebaseapp.com`,
-        databaseURL: dbURL,
-        projectId: projectId,
-        storageBucket: `${projectId}.firebasestorage.app`,
-    };
-
+    const firebaseConfig = { apiKey, authDomain: `${projectId}.firebaseapp.com`, databaseURL: dbURL, projectId };
     const app = initializeApp(firebaseConfig);
     const db = getDatabase(app);
 
     // --- 2. 地圖初始化 ---
     const map = L.map('map').setView([25.0330, 121.5654], 16);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '© OpenStreetMap contributors'
-    }).addTo(map);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap contributors' }).addTo(map);
 
-    const personIcon = L.icon({
-        iconUrl: './man-walking.png',
-        iconSize:     [40, 40],
-        iconAnchor:   [20, 38],
-        popupAnchor:  [0, -40]
-    });
-
+    const personIcon = L.icon({ iconUrl: './man-walking.png', iconSize: [40, 40], iconAnchor: [20, 38], popupAnchor: [0, -40] });
     let marker = L.marker([0, 0], { icon: personIcon }).addTo(map);
     let pathLine = L.polyline([], {color: 'blue', weight: 4}).addTo(map);
     let coordsArray = [];
@@ -209,4 +194,5 @@
 </script>
 </body>
 </html>
+
 
