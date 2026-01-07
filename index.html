@@ -186,13 +186,55 @@
     const historyRef = ref(db, `${dbPath}/history`);
     onChildAdded(historyRef, (snapshot) => {
         const data = snapshot.val();
-        if (data) {
+        // 多加一個檢查確保資料完整
+        if (data && data.lat && data.lon && data.timestamp) {
             const pos = [data.lat, data.lon];
+            
+            // 1. 更新原本的線條
             coordsArray.push(pos);
             pathLine.setLatLngs(coordsArray);
+
+            // 2. 建立一個大一點的圓點標記
+            const circleMarker = L.circleMarker(pos, {
+                color: 'white',       // 白色邊框
+                fillColor: '#007bff', // 亮藍色填充
+                fillOpacity: 0.9,     // 填充不透明度 (越接近 1 越實心)
+                weight: 2,            // 邊框粗細
+                radius: 7             // ✨ 圓點半徑 (原本是線條，現在改大一點，例如 7 或 8)
+            });
+
+            // 3. 準備提示框要顯示的資料 (格式化時間與高度)
+            const dateObj = new Date(data.timestamp * 1000);
+            const timeStr = dateObj.toLocaleTimeString('zh-TW', { hour12: false });
+            const dateStr = dateObj.toLocaleDateString();
+            // 安全取得高度，如果沒有高度資料就顯示 N/A
+            const altText = (data.alt !== undefined && data.alt !== null) ? data.alt.toFixed(1) : "N/A";
+
+            // 4. 設定提示框內容 (使用 HTML 排版)
+            const tooltipContent = `
+                <div style="text-align: left; line-height: 1.5;">
+                    <span style="color: #ffc107;">📅 日期:</span> ${dateStr}<br>
+                    <span style="color: #ffc107;">⏰ 時間:</span> ${timeStr}<br>
+                    <b>📍 緯度:</b> ${data.lat.toFixed(6)}<br>
+                    <b>📍 經度:</b> ${data.lon.toFixed(6)}<br>
+                    <b>🏔️ 高度:</b> ${altText} m
+                </div>
+            `;
+
+            // 5. 綁定到圓點上 (設定滑鼠滑過才顯示)
+            circleMarker.bindTooltip(tooltipContent, {
+                permanent: false,    // false = 滑鼠移上去才顯示，true = 一直顯示
+                direction: 'top',    // 顯示在圓點上方
+                className: 'custom-tooltip', // 套用我們在 CSS 寫的樣式
+                offset: [0, -8]      // 位置稍微往上調一點點
+            });
+
+            // 6. 把這個圓點加入地圖圖層中
+            historyMarkersLayer.addLayer(circleMarker);
         }
     });
 
 </script>
 </body>
 </html>
+
