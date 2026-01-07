@@ -21,7 +21,7 @@
         .st-active { background-color: #28a745; box-shadow: 0 0 5px #28a745; }
         .st-connecting { background-color: #ffc107; animation: blink 1s infinite; }
         .st-offline { background-color: #dc3545; }
-        .st-timeout { background-color: #dc3545; animation: blink 0.5s infinite; }
+        .st-timeout { background-color: #dc3545; animation: blink 0.5s infinite; } /* 新增：逾時快閃紅燈 */
         
         @keyframes blink { 50% { opacity: 0.4; } }
     </style>
@@ -51,54 +51,53 @@
     import {initializeApp} from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
     import {getDatabase, ref, onValue, onChildAdded} from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
 
-    // --- 參數設定 ---
+    // --- 1. 參數設定 ---
     const urlParams = new URLSearchParams(window.location.search);
-    const projectId = urlParams.get('id') || "real-time-gps-84c8a"; // 修改為你的預設ID
+    const projectId = urlParams.get('id') || "real-time-gps-84c8a";
     const apiKey = urlParams.get('key') || "AIzaSyCjPnL5my8NsG7XYCbABGh45KtKM9s4SlI";
     const dbPath = urlParams.get('path') || "test_project"; 
     const dbURL = urlParams.get('db') || `https://${projectId}-default-rtdb.asia-southeast1.firebasedatabase.app`;
 
     document.getElementById('currentPath').innerText = dbPath;
 
-    const firebaseConfig = { apiKey, authDomain: `${projectId}.firebaseapp.com`, databaseURL: dbURL, projectId };
+    const firebaseConfig = {
+        apiKey: apiKey,
+        authDomain: `${projectId}.firebaseapp.com`,
+        databaseURL: dbURL,
+        projectId: projectId,
+        storageBucket: `${projectId}.firebasestorage.app`,
+    };
+
     const app = initializeApp(firebaseConfig);
     const db = getDatabase(app);
 
-    // --- 地圖初始化 ---
+    // --- 2. 地圖初始化 ---
     const map = L.map('map').setView([25.0330, 121.5654], 16);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(map);
-    const personIcon = L.icon({ iconUrl: './man-walking.png', iconSize: [40, 40], iconAnchor: [20, 38], popupAnchor: [0, -40] });
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap contributors'
+    }).addTo(map);
+
+    const personIcon = L.icon({
+        iconUrl: './man-walking.png',
+        iconSize:     [40, 40],
+        iconAnchor:   [20, 38],
+        popupAnchor:  [0, -40]
+    });
+
     let marker = L.marker([0, 0], { icon: personIcon }).addTo(map);
     let pathLine = L.polyline([], {color: 'blue', weight: 4}).addTo(map);
     let coordsArray = [];
 
-    // --- DOM 元素 ---
+    // --- 3. 狀態管理邏輯 ---
     const statusDot = document.getElementById('status-dot');
     const statusText = document.getElementById('connection-text');
     const statusMsg = document.getElementById('status-msg');
-    const timeDisplay = document.getElementById('time');
-    const coordsDisplay = document.getElementById('coords');
 
-    // --- 變數 ---
-    let lastMessageReceivedAt = 0; // 改為 0，確保一開始是過期狀態
+    let lastHeartbeat = 0;
     let backendState = 'offline';
-    const TIMEOUT_MS = 6000;       // 放寬到 6 秒 (配合 Python 加速)
-    
-    let cachedLat = 0;
-    let cachedLon = 0;
+    const TIMEOUT_MS = 5000; // 5秒判斷逾時
 
-    // ==========================================
-    // 1. 獨立時鐘 (永遠在跑)
-    // ==========================================
-    setInterval(() => {
-        const now = new Date();
-        timeDisplay.innerText = now.toLocaleTimeString('zh-TW', { hour12: false });
-    }, 1000); 
-
-    // ==========================================
-    // 2. 畫面渲染邏輯
-    // ==========================================
-    function renderPage(state, text, msg) {
+    function updateUI(state, text, msg) {
         statusDot.classList.remove('st-active', 'st-connecting', 'st-offline', 'st-timeout');
         
         if (state === 'active') {
@@ -108,84 +107,54 @@
             statusDot.classList.add('st-connecting');
             statusText.style.color = '#d39e00';
         } else if (state === 'timeout') {
+            // 新增：逾時專用樣式
             statusDot.classList.add('st-timeout');
             statusText.style.color = '#dc3545';
         } else {
+            // 手動停止 (offline)
             statusDot.classList.add('st-offline');
             statusText.style.color = 'gray';
         }
+
         statusText.innerText = text;
         statusMsg.innerText = msg;
-
-        // 只有 active 才顯示座標
-        if (state === 'active') {
-            coordsDisplay.innerText = `${cachedLat.toFixed(5)}, ${cachedLon.toFixed(5)}`;
-            marker.setOpacity(1.0); 
-        } else {
-            coordsDisplay.innerText = "-, -";
-            marker.setOpacity(0.5); // 斷線時讓小人變半透明
-        }
     }
 
-    // ==========================================
-    // 3. 監聽後端狀態 (解決問題一：過期資料過濾)
-    // ==========================================
+    // A. 監聽後端 (處理「手動停止」與「正常連線」)
     const statusRef = ref(db, `${dbPath}/status`);
     onValue(statusRef, (snapshot) => {
         const data = snapshot.val();
         if (data) {
-            const now = Date.now();
-            const serverTime = data.last_updated;
-
-            // ✨ 關鍵修正：檢查資料是否「過期」
-            // 如果這筆資料的時間戳記，距離現在超過 10 秒 -> 視為無效/舊資料
-            // 這能解決「一開網頁顯示上次狀態」的問題
-            if (Math.abs(now - serverTime) > 10000) {
-                console.log("偵測到過期資料，忽略狀態");
-                renderPage('offline', '未連線', '等待程式啟動...');
-                return; 
-            }
-
-            // 資料是新鮮的，更新收信時間
-            lastMessageReceivedAt = now;
+            lastHeartbeat = data.last_updated;
             backendState = data.state;
             
             let displayText = '未連線';
             let displayState = data.state;
 
-            if (data.state === 'active') displayText = '連線正常';
-            else if (data.state === 'connecting') displayText = '連線中';
-            else if (data.state === 'offline') displayText = '程式已停止';
-            else if (data.state === 'timeout') {
-                displayText = '連線逾時';
-                displayState = 'timeout';
+            // --- 狀態判讀邏輯 ---
+            if (data.state === 'active') {
+                displayText = '連線正常';
+            } else if (data.state === 'connecting') {
+                displayText = '連線中';
+            } else if (data.state === 'offline') {
+                displayText = '程式已停止'; // 手動關閉顯示這個
+            } else if (data.state === 'timeout') {
+                displayText = '連線逾時';   // 後端通知的逾時顯示這個
+                displayState = 'timeout';   // 確保觸發紅色閃爍樣式
             }
             
-            renderPage(displayState, displayText, data.message || '');
+            updateUI(displayState, displayText, data.message || '');
         }
     });
 
-    // ==========================================
-    // 4. 前端守門員 (Watchdog)
-    // ==========================================
-    setInterval(() => {
-        const now = Date.now();
-        // 如果後端沒說自己 offline，但超過 6 秒沒更新 -> 判定逾時
-        // 加了 lastMessageReceivedAt > 0 是為了避免剛開啟網頁還沒收到資料時就跳 Timeout
-        if (backendState !== 'offline' && lastMessageReceivedAt > 0 && (now - lastMessageReceivedAt > TIMEOUT_MS)) {
-            renderPage('timeout', '連線逾時', '訊號中斷 (No Heartbeat)');
-        }
-    }, 1000);
-
-    // ==========================================
-    // 5. 數據接收
-    // ==========================================
+    // --- 4. 座標更新 ---
     const latestRef = ref(db, `${dbPath}/latest`);
     onValue(latestRef, (snapshot) => {
         const data = snapshot.val();
         if (data && data.lat) {
-            cachedLat = data.lat;
-            cachedLon = data.lon;
+            const dateObj = new Date(data.timestamp * 1000);
+            document.getElementById('time').innerText = dateObj.toLocaleTimeString('zh-TW', { hour12: false });
+            document.getElementById('coords').innerText = `${data.lat.toFixed(5)}, ${data.lon.toFixed(5)}`;
 
             const pos = [data.lat, data.lon];
             marker.setLatLng(pos);
@@ -193,23 +162,20 @@
             if (document.getElementById('autoCenter').checked) {
                 map.panTo(pos);
             }
-            
-            if (backendState === 'active') {
-               document.getElementById('coords').innerText = `${data.lat.toFixed(5)}, ${data.lon.toFixed(5)}`;
-            }
         }
     });
 
-    // 歷史路徑
+    // --- 5. 歷史路徑 ---
     const historyRef = ref(db, `${dbPath}/history`);
     onChildAdded(historyRef, (snapshot) => {
         const data = snapshot.val();
         if (data) {
-            coordsArray.push([data.lat, data.lon]);
+            const pos = [data.lat, data.lon];
+            coordsArray.push(pos);
             pathLine.setLatLngs(coordsArray);
         }
     });
 
 </script>
 </body>
-</html>
+</html>v
