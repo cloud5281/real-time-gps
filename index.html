@@ -1,59 +1,10 @@
-<!DOCTYPE html>
-<html lang="zh-TW">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>GPS Tracker</title>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <style>
-        body, html { margin: 0; padding: 0; height: 100%; }
-        #map { height: 100vh; width: 100%; }
-        .info-panel {
-            position: absolute; top: 10px; right: 10px; z-index: 1000;
-            background: rgba(255, 255, 255, 0.95); padding: 15px; border-radius: 8px;
-            box-shadow: 0 0 10px rgba(0,0,0,0.2); font-family: sans-serif;
-            min-width: 200px;
-        }
-        .status-dot {
-            display: inline-block; width: 10px; height: 10px; border-radius: 50%;
-            margin-right: 5px; background-color: gray;
-        }
-        .st-active { background-color: #28a745; box-shadow: 0 0 5px #28a745; }
-        .st-connecting { background-color: #ffc107; animation: blink 1s infinite; }
-        .st-offline { background-color: #dc3545; }
-        .st-timeout { background-color: #dc3545; animation: blink 0.5s infinite; }
-        
-        @keyframes blink { 50% { opacity: 0.4; } }
-    </style>
-</head>
-<body>
-
-<div class="info-panel">
-    <b>GPS 狀態監控</b><br>
-    
-    <div style="margin-top: 5px; padding: 5px; background: #f8f9fa; border-radius: 4px;">
-        <span id="status-dot" class="status-dot st-offline"></span>
-        <span id="connection-text" style="font-weight: bold; color: gray;">未連線</span><br>
-        <small id="status-msg" style="color: #666; font-size: 12px;">等待訊號...</small>
-    </div>
-
-    專案: <span id="currentPath" style="color: blue;">-</span><br>
-    座標: <span id="coords">-</span><br>
-    時間: <span id="time">-</span><br>
-    <label><input type="checkbox" id="autoCenter" checked> 自動跟隨</label>
-</div>
-
-<div id="map"></div>
-
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-
 <script type="module">
     import {initializeApp} from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
     import {getDatabase, ref, onValue, onChildAdded} from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
 
     // --- 參數設定 ---
     const urlParams = new URLSearchParams(window.location.search);
-    const projectId = urlParams.get('id') || "real-time-gps-84c8a";
+    const projectId = urlParams.get('id') || "real-time-gps-84c8a"; // 修改為你的預設ID
     const apiKey = urlParams.get('key') || "AIzaSyCjPnL5my8NsG7XYCbABGh45KtKM9s4SlI";
     const dbPath = urlParams.get('path') || "test_project"; 
     const dbURL = urlParams.get('db') || `https://${projectId}-default-rtdb.asia-southeast1.firebasedatabase.app`;
@@ -80,27 +31,25 @@
     const coordsDisplay = document.getElementById('coords');
 
     // --- 變數 ---
-    let lastMessageReceivedAt = Date.now(); 
+    let lastMessageReceivedAt = 0; // 改為 0，確保一開始是過期狀態
     let backendState = 'offline';
-    const TIMEOUT_MS = 5000;
+    const TIMEOUT_MS = 6000;       // 放寬到 6 秒 (配合 Python 加速)
     
-    // 暫存最新的座標數據 (即使現在不顯示，也要存起來)
     let cachedLat = 0;
     let cachedLon = 0;
 
     // ==========================================
-    // 1. 獨立時鐘 (永遠再跑，不管連線狀態)
+    // 1. 獨立時鐘 (永遠在跑)
     // ==========================================
     setInterval(() => {
         const now = new Date();
         timeDisplay.innerText = now.toLocaleTimeString('zh-TW', { hour12: false });
-    }, 1000); // 每秒更新一次
+    }, 1000); 
 
     // ==========================================
-    // 2. 畫面渲染邏輯 (決定何時顯示 "-")
+    // 2. 畫面渲染邏輯
     // ==========================================
     function renderPage(state, text, msg) {
-        // A. 更新燈號與文字
         statusDot.classList.remove('st-active', 'st-connecting', 'st-offline', 'st-timeout');
         
         if (state === 'active') {
@@ -119,27 +68,37 @@
         statusText.innerText = text;
         statusMsg.innerText = msg;
 
-        // B. 更新座標顯示 (關鍵修改！)
-        // 只有在 active 狀態下，才顯示數字，其餘通通顯示 "-"
+        // 只有 active 才顯示座標
         if (state === 'active') {
             coordsDisplay.innerText = `${cachedLat.toFixed(5)}, ${cachedLon.toFixed(5)}`;
-            // 恢復地圖標記透明度 (可選)
             marker.setOpacity(1.0); 
         } else {
             coordsDisplay.innerText = "-, -";
-            // 選項：斷線時可以讓地圖上的小人變半透明，或是保持原樣
-            // marker.setOpacity(0.5); 
+            marker.setOpacity(0.5); // 斷線時讓小人變半透明
         }
     }
 
     // ==========================================
-    // 3. 監聽後端狀態 (Status)
+    // 3. 監聽後端狀態 (解決問題一：過期資料過濾)
     // ==========================================
     const statusRef = ref(db, `${dbPath}/status`);
     onValue(statusRef, (snapshot) => {
         const data = snapshot.val();
         if (data) {
-            lastMessageReceivedAt = Date.now();
+            const now = Date.now();
+            const serverTime = data.last_updated;
+
+            // ✨ 關鍵修正：檢查資料是否「過期」
+            // 如果這筆資料的時間戳記，距離現在超過 10 秒 -> 視為無效/舊資料
+            // 這能解決「一開網頁顯示上次狀態」的問題
+            if (Math.abs(now - serverTime) > 10000) {
+                console.log("偵測到過期資料，忽略狀態");
+                renderPage('offline', '未連線', '等待程式啟動...');
+                return; 
+            }
+
+            // 資料是新鮮的，更新收信時間
+            lastMessageReceivedAt = now;
             backendState = data.state;
             
             let displayText = '未連線';
@@ -162,27 +121,23 @@
     // ==========================================
     setInterval(() => {
         const now = Date.now();
-        // 如果後端沒說自己 offline，但太久沒消息 -> 判定逾時
-        if (backendState !== 'offline' && (now - lastMessageReceivedAt > TIMEOUT_MS)) {
-            // 強制更新畫面為 Timeout 狀態 -> 這會觸發座標變 "-"
+        // 如果後端沒說自己 offline，但超過 6 秒沒更新 -> 判定逾時
+        // 加了 lastMessageReceivedAt > 0 是為了避免剛開啟網頁還沒收到資料時就跳 Timeout
+        if (backendState !== 'offline' && lastMessageReceivedAt > 0 && (now - lastMessageReceivedAt > TIMEOUT_MS)) {
             renderPage('timeout', '連線逾時', '訊號中斷 (No Heartbeat)');
         }
     }, 1000);
 
     // ==========================================
-    // 5. 數據接收 (Data)
+    // 5. 數據接收
     // ==========================================
     const latestRef = ref(db, `${dbPath}/latest`);
     onValue(latestRef, (snapshot) => {
         const data = snapshot.val();
         if (data && data.lat) {
-            // 這裡只負責更新「緩存數據」和「地圖」
-            // 是否要顯示在文字框上，由 renderPage 決定
-            
             cachedLat = data.lat;
             cachedLon = data.lon;
 
-            // 地圖還是可以一直更新位置 (即使現在顯示未連線，地圖跑到最後已知位置也是合理的)
             const pos = [data.lat, data.lon];
             marker.setLatLng(pos);
             
@@ -190,11 +145,7 @@
                 map.panTo(pos);
             }
             
-            // 如果現在狀態剛好是 active，這裡也順便刷新一下文字框，確保數字是最新的
             if (backendState === 'active') {
-               // 這裡不需要額外呼叫 renderPage，因為狀態沒變，
-               // 直接更新 DOM 效能比較好，但為了邏輯統一，我們上面已經存到 cached 變數了
-               // 只要狀態是 active，上面的 renderPage 邏輯不變，我們可以手動更新一下文字
                document.getElementById('coords').innerText = `${data.lat.toFixed(5)}, ${data.lon.toFixed(5)}`;
             }
         }
@@ -211,5 +162,3 @@
     });
 
 </script>
-</body>
-</html>
