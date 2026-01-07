@@ -58,6 +58,7 @@
     const dbPath = urlParams.get('path') || "test_project"; 
     const dbURL = urlParams.get('db') || `https://${projectId}-default-rtdb.asia-southeast1.firebasedatabase.app`;
 
+    document.getElementById('time').innerText = Date().toLocaleTimeString('zh-TW', { hour12: false });
     document.getElementById('currentPath').innerText = dbPath;
 
     const firebaseConfig = {
