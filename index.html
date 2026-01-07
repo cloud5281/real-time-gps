@@ -21,7 +21,7 @@
         .st-active { background-color: #28a745; box-shadow: 0 0 5px #28a745; }
         .st-connecting { background-color: #ffc107; animation: blink 1s infinite; }
         .st-offline { background-color: #dc3545; }
-        .st-timeout { background-color: #dc3545; animation: blink 0.5s infinite; }
+        .st-timeout { background-color: #dc3545; animation: blink 0.5s infinite; } /* 新增：逾時快閃紅燈 */
         
         @keyframes blink { 50% { opacity: 0.4; } }
     </style>
@@ -60,133 +60,121 @@
 
     document.getElementById('currentPath').innerText = dbPath;
 
-    const firebaseConfig = { apiKey, authDomain: `${projectId}.firebaseapp.com`, databaseURL: dbURL, projectId };
+    const firebaseConfig = {
+        apiKey: apiKey,
+        authDomain: `${projectId}.firebaseapp.com`,
+        databaseURL: dbURL,
+        projectId: projectId,
+        storageBucket: `${projectId}.firebasestorage.app`,
+    };
+
     const app = initializeApp(firebaseConfig);
     const db = getDatabase(app);
 
     // --- 2. 地圖初始化 ---
     const map = L.map('map').setView([25.0330, 121.5654], 16);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap contributors' }).addTo(map);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap contributors'
+    }).addTo(map);
 
-    const personIcon = L.icon({ iconUrl: './man-walking.png', iconSize: [40, 40], iconAnchor: [20, 38], popupAnchor: [0, -40] });
+    const personIcon = L.icon({
+        iconUrl: './man-walking.png',
+        iconSize:     [40, 40],
+        iconAnchor:   [20, 38],
+        popupAnchor:  [0, -40]
+    });
+
     let marker = L.marker([0, 0], { icon: personIcon }).addTo(map);
     let pathLine = L.polyline([], {color: 'blue', weight: 4}).addTo(map);
     let coordsArray = [];
 
-    // --- 3. 狀態與顯示邏輯 ---
-    const statusDot = document.getElementById('status-dot');
-    const statusText = document.getElementById('connection-text');
-    const statusMsg = document.getElementById('status-msg');
-    const coordsDisplay = document.getElementById('coords');
-    const timeDisplay = document.getElementById('time');
-
-    let lastMessageReceivedAt = 0; // 0 代表一開始沒資料
+    // --- 3. 狀態管理邏輯 ---
+    let lastKnownCoords = "-"; // 儲存最後一次有效的座標字串
     let backendState = 'offline';
+    let lastGpsData = null; // 儲存最後一筆 GPS 物件
     
-    // 暫存座標用
-    let cachedLat = 0;
-    let cachedLon = 0;
-
-    // ✨ 邏輯一：時間永遠在走 (獨立於 Firebase)
-    setInterval(() => {
+    // --- 4. UI 渲染引擎 (每秒執行) ---
+    function renderUI() {
+        // A. 更新時間 (永遠照跑)
         const now = new Date();
-        timeDisplay.innerText = now.toLocaleTimeString('zh-TW', { hour12: false });
-    }, 1000);
-
-    // ✨ 邏輯二：統一畫面渲染 (控制座標顯示 "-")
-    function renderPage(state, text, msg) {
-        statusDot.classList.remove('st-active', 'st-connecting', 'st-offline', 'st-timeout');
-        
-        // 燈號判定
-        if (state === 'active') {
-            statusDot.classList.add('st-active');
-            statusText.style.color = '#28a745';
-        } else if (state === 'connecting') {
-            statusDot.classList.add('st-connecting');
-            statusText.style.color = '#d39e00';
-        } else if (state === 'timeout') {
-            statusDot.classList.add('st-timeout');
-            statusText.style.color = '#dc3545';
+        document.getElementById('time').innerText = now.toLocaleTimeString('zh-TW', { hour12: false });
+    
+        // B. 根據狀態決定座標顯示
+        const coordsEl = document.getElementById('coords');
+        if (backendState === 'active' && lastGpsData) {
+            // 只有在 active 狀態下才顯示真實座標
+            coordsEl.innerText = `${lastGpsData.lat.toFixed(5)}, ${lastGpsData.lon.toFixed(5)}`;
+            coordsEl.style.color = "black";
         } else {
-            statusDot.classList.add('st-offline');
-            statusText.style.color = 'gray';
-        }
-        statusText.innerText = text;
-        statusMsg.innerText = msg;
-
-        // 座標顯示判定 (只有 Active 才給看數字)
-        if (state === 'active') {
-            coordsDisplay.innerText = `${cachedLat.toFixed(5)}, ${cachedLon.toFixed(5)}`;
-            marker.setOpacity(1.0); 
-        } else {
-            coordsDisplay.innerText = "-, -";
-            marker.setOpacity(0.5); // 斷線時小人變半透明
+            // 其他任何狀態 (connecting, timeout, offline) 都顯示 "-"
+            coordsEl.innerText = "-";
+            coordsEl.style.color = "#ccc"; // 變灰色提示失效
         }
     }
-
-    // A. 監聽後端 Status (解決：剛開網頁顯示舊狀態)
+    
+    // 啟動定時器：每 1000 毫秒 (1秒) 強制更新一次介面
+    setInterval(renderUI, 1000);
+    
+    // --- 5. Firebase 監聽 ---
+    
+    // A. 監聽狀態 (控制開關)
     const statusRef = ref(db, `${dbPath}/status`);
     onValue(statusRef, (snapshot) => {
         const data = snapshot.val();
         if (data) {
-            const now = Date.now();
-            
-            // 🚨 檢查資料過期：如果 Firebase 上的時間距離現在超過 10 秒，視為未連線
-            if (Math.abs(now - data.last_updated) > 10000) {
-                renderPage('offline', '未連線', '等待程式啟動...');
-                return;
-            }
-
-            // 更新收信時間
-            lastMessageReceivedAt = now;
             backendState = data.state;
             
             let displayText = '未連線';
-            let displayState = data.state;
-
             if (data.state === 'active') displayText = '連線正常';
-            else if (data.state === 'connecting') displayText = '連線中';
-            else if (data.state === 'offline') displayText = '程式已停止';
-            else if (data.state === 'timeout') {
-                displayText = '連線逾時';
-                displayState = 'timeout';
-            }
-            
-            renderPage(displayState, displayText, data.message || '');
+            else if (data.state === 'connecting') displayText = '等待訊號';
+            else if (data.state === 'timeout') displayText = '連線逾時';
+            else if (data.state === 'offline') displayText = '服務停止';
+    
+            updateStatusDot(data.state, displayText, data.message || '');
         }
     });
-
-    // B. 監聽座標 Latest (解決：閃爍問題，收到座標也算活著)
+    
+    // B. 監聽座標 (僅儲存數據，不直接操作 DOM)
     const latestRef = ref(db, `${dbPath}/latest`);
     onValue(latestRef, (snapshot) => {
         const data = snapshot.val();
         if (data && data.lat) {
-            // 只要收到座標，就重置「最後收信時間」，防止 Watchdog 亂叫
-            lastMessageReceivedAt = Date.now();
+            lastGpsData = data; // 更新快取
             
-            cachedLat = data.lat;
-            cachedLon = data.lon;
-
+            // 地圖上的 Marker 建議還是保持在最後已知位置，或者根據需求隱藏
             const pos = [data.lat, data.lon];
             marker.setLatLng(pos);
-            
-            if (document.getElementById('autoCenter').checked) {
+            if (document.getElementById('autoCenter').checked && backendState === 'active') {
                 map.panTo(pos);
-            }
-            
-            // 如果後端狀態顯示 active，這裡順便刷新一下文字，確保數字即時跳動
-            if (backendState === 'active') {
-               document.getElementById('coords').innerText = `${data.lat.toFixed(5)}, ${data.lon.toFixed(5)}`;
             }
         }
     });
+    
+    // 輔助：更新燈號顏色
+    function updateStatusDot(state, text, msg) {
+        const statusDot = document.getElementById('status-dot');
+        const statusText = document.getElementById('connection-text');
+        const statusMsg = document.getElementById('status-msg');
+    
+        statusDot.className = 'status-dot'; // Reset
+        statusDot.classList.add(`st-${state}`);
+        
+        statusText.innerText = text;
+        statusMsg.innerText = msg;
+        
+        // 顏色微調
+        if(state === 'active') statusText.style.color = '#28a745';
+        else if(state === 'connecting') statusText.style.color = '#d39e00';
+        else statusText.style.color = 'gray';
+    }
 
-    // D. 歷史路徑
+    // --- 5. 歷史路徑 ---
     const historyRef = ref(db, `${dbPath}/history`);
     onChildAdded(historyRef, (snapshot) => {
         const data = snapshot.val();
         if (data) {
-            coordsArray.push([data.lat, data.lon]);
+            const pos = [data.lat, data.lon];
+            coordsArray.push(pos);
             pathLine.setLatLngs(coordsArray);
         }
     });
