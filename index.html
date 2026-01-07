@@ -125,7 +125,7 @@
             }    
             else if (data.state === 'connecting') displayText = '連線中...';
             else if (data.state === 'timeout') displayText = '連線逾時';
-            else if (data.state === 'offline') displayText = '程式已停止運作';
+            else if (data.state === 'offline') displayText = '未連線';
     
             updateStatusDot(data.state, displayText, data.message || '');
         }
@@ -179,5 +179,6 @@
 </script>
 </body>
 </html>
+
 
 
