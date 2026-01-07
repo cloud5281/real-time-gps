@@ -88,45 +88,41 @@
     let pathLine = L.polyline([], {color: 'blue', weight: 4}).addTo(map);
     let coordsArray = [];
 
-    // --- 3. 狀態管理與平滑時鐘 (修正版：改用本地收信時間判斷逾時) ---
+    // --- 3. 狀態管理與系統時鐘 (核心修改) ---
     const statusDot = document.getElementById('status-dot');
     const statusText = document.getElementById('connection-text');
     const statusMsg = document.getElementById('status-msg');
     const timeDisplay = document.getElementById('time');
 
-    // ✨ 關鍵修改：不再依賴後端傳來的時間，改用前端自己記錄收到資料的時間
     let lastMessageReceivedAt = Date.now(); 
     let backendState = 'offline';
     const TIMEOUT_MS = 5000;
 
-    // 平滑時鐘變數
-    let currentDisplayTimestamp = 0; 
     let clockInterval = null;        
 
-    // 啟動或重置本地時鐘
-    function startSmoothClock(initialTime) {
-        if (clockInterval) clearInterval(clockInterval);
-        
-        currentDisplayTimestamp = Math.floor(initialTime);
-        updateTimeText(currentDisplayTimestamp); 
+    // ✨ 修改：系統時鐘 (只顯示現在瀏覽器的時間，不管資料內容)
+    function startSystemClock() {
+        if (clockInterval) return; // 已經在跑就不重複開
 
-        clockInterval = setInterval(() => {
-            currentDisplayTimestamp += 1;
-            updateTimeText(currentDisplayTimestamp);
-        }, 1000);
+        updateTimeDisplay(); // 立即更新一次
+        clockInterval = setInterval(updateTimeDisplay, 1000);
     }
 
-    function stopSmoothClock() {
+    function stopSystemClock() {
         if (clockInterval) {
             clearInterval(clockInterval);
             clockInterval = null;
         }
     }
 
-    function updateTimeText(unixSeconds) {
-        const dateObj = new Date(unixSeconds * 1000);
-        timeDisplay.innerText = dateObj.toLocaleTimeString('zh-TW', { hour12: false });
+    function updateTimeDisplay() {
+        // 直接抓現在時間，不使用 GPS timestamp
+        const now = new Date();
+        timeDisplay.innerText = now.toLocaleTimeString('zh-TW', { hour12: false });
     }
+
+    // 預設一開始就啟動時鐘 (讓它一直走)
+    startSystemClock();
 
     function updateUI(state, text, msg) {
         statusDot.classList.remove('st-active', 'st-connecting', 'st-offline', 'st-timeout');
@@ -154,23 +150,28 @@
     onValue(statusRef, (snapshot) => {
         const data = snapshot.val();
         if (data) {
-            // ✨ 關鍵修改：只要有收到 Firebase 更新，就重置「最後收信時間」為「現在(前端時間)」
             lastMessageReceivedAt = Date.now();
-            
             backendState = data.state;
             
             let displayText = '未連線';
             let displayState = data.state;
 
-            if (data.state === 'active') displayText = '連線正常';
-            else if (data.state === 'connecting') displayText = '連線中';
+            if (data.state === 'active') {
+                displayText = '連線正常';
+                startSystemClock(); // 確保時鐘在走
+            }
+            else if (data.state === 'connecting') {
+                displayText = '連線中';
+                startSystemClock(); // 確保時鐘在走
+            }
             else if (data.state === 'offline') {
                 displayText = '程式已停止';
-                stopSmoothClock(); 
+                stopSystemClock(); // ✨ 只有在「程式明確停止」時，才凍結時間，方便知道何時停的
             } else if (data.state === 'timeout') {
                 displayText = '連線逾時';
                 displayState = 'timeout';
-                stopSmoothClock();
+                // 逾時通常代表網路卡住，建議讓時鐘繼續走，代表監控系統本身還活著
+                startSystemClock(); 
             }
             
             updateUI(displayState, displayText, data.message || '');
@@ -180,31 +181,23 @@
     // B. 前端守門員 (Watchdog)
     setInterval(() => {
         const now = Date.now();
-        // ✨ 關鍵修改：用「現在」減「上次收信時間」
-        // 這樣就不會因為 Python 時鐘跟瀏覽器時鐘不同步而誤判斷線了
         if (backendState !== 'offline' && (now - lastMessageReceivedAt > TIMEOUT_MS)) {
             updateUI('timeout', '連線逾時', '訊號中斷 (No Heartbeat)');
-            stopSmoothClock(); 
+            // 逾時的時候，我們保持時鐘繼續走，這樣你才知道「現在」已經幾點了，而資料還沒來
+            startSystemClock();
         }
     }, 1000);
 
-    // --- 4. 座標更新 (包含時鐘校正) ---
+    // --- 4. 座標更新 (完全移除時鐘干涉) ---
     const latestRef = ref(db, `${dbPath}/latest`);
     onValue(latestRef, (snapshot) => {
         const data = snapshot.val();
         if (data && data.lat) {
             
-            // ✨ 時鐘校正邏輯 ✨
-            const serverSeconds = Math.floor(data.timestamp);
-            
-            // 如果時鐘還沒跑，或是誤差超過 2 秒 (嚴重落後或超前) -> 強制校正
-            if (!clockInterval || Math.abs(serverSeconds - currentDisplayTimestamp) > 2) {
-                console.log("時鐘校正: 同步後端時間");
-                startSmoothClock(data.timestamp);
-            }
-            // 如果誤差在 2 秒內 -> 忽略後端時間，繼續用自己的節奏跑 (這樣就不會忽快忽慢)
+            // ✨ 這裡已經移除了所有跟時鐘有關的程式碼 (startSmoothClock...)
+            // 無論 data.timestamp 是多久以前的歷史資料，都不會影響畫面上的時間
 
-            // 更新座標與地圖 (這部分需要即時)
+            // 只更新座標與地圖
             document.getElementById('coords').innerText = `${data.lat.toFixed(5)}, ${data.lon.toFixed(5)}`;
             const pos = [data.lat, data.lon];
             marker.setLatLng(pos);
