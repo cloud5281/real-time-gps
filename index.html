@@ -88,35 +88,34 @@
     let pathLine = L.polyline([], {color: 'blue', weight: 4}).addTo(map);
     let coordsArray = [];
 
-    // --- 3. 狀態管理與平滑時鐘 (核心修改) ---
+    // --- 3. 狀態管理與平滑時鐘 (修正版：改用本地收信時間判斷逾時) ---
     const statusDot = document.getElementById('status-dot');
     const statusText = document.getElementById('connection-text');
     const statusMsg = document.getElementById('status-msg');
     const timeDisplay = document.getElementById('time');
 
-    let lastHeartbeat = 0;
+    // ✨ 關鍵修改：不再依賴後端傳來的時間，改用前端自己記錄收到資料的時間
+    let lastMessageReceivedAt = Date.now(); 
     let backendState = 'offline';
     const TIMEOUT_MS = 5000;
 
-    // ✨ 平滑時鐘變數
-    let currentDisplayTimestamp = 0; // 當前顯示的秒數
-    let clockInterval = null;        // 計時器物件
+    // 平滑時鐘變數
+    let currentDisplayTimestamp = 0; 
+    let clockInterval = null;        
 
     // 啟動或重置本地時鐘
     function startSmoothClock(initialTime) {
-        if (clockInterval) clearInterval(clockInterval); // 防止重複啟動
+        if (clockInterval) clearInterval(clockInterval);
         
         currentDisplayTimestamp = Math.floor(initialTime);
-        updateTimeText(currentDisplayTimestamp); // 立即更新一次
+        updateTimeText(currentDisplayTimestamp); 
 
         clockInterval = setInterval(() => {
-            // 每秒自動 +1，不管後端有沒有傳資料來
             currentDisplayTimestamp += 1;
             updateTimeText(currentDisplayTimestamp);
         }, 1000);
     }
 
-    // 停止時鐘 (當斷線時)
     function stopSmoothClock() {
         if (clockInterval) {
             clearInterval(clockInterval);
@@ -124,7 +123,6 @@
         }
     }
 
-    // 更新 HTML 時間文字
     function updateTimeText(unixSeconds) {
         const dateObj = new Date(unixSeconds * 1000);
         timeDisplay.innerText = dateObj.toLocaleTimeString('zh-TW', { hour12: false });
@@ -156,7 +154,9 @@
     onValue(statusRef, (snapshot) => {
         const data = snapshot.val();
         if (data) {
-            lastHeartbeat = data.last_updated;
+            // ✨ 關鍵修改：只要有收到 Firebase 更新，就重置「最後收信時間」為「現在(前端時間)」
+            lastMessageReceivedAt = Date.now();
+            
             backendState = data.state;
             
             let displayText = '未連線';
@@ -166,23 +166,25 @@
             else if (data.state === 'connecting') displayText = '連線中';
             else if (data.state === 'offline') {
                 displayText = '程式已停止';
-                stopSmoothClock(); // ✨ 程式停止時，時鐘也要停
+                stopSmoothClock(); 
             } else if (data.state === 'timeout') {
                 displayText = '連線逾時';
                 displayState = 'timeout';
-                stopSmoothClock(); // ✨ 逾時時，時鐘也要停
+                stopSmoothClock();
             }
             
             updateUI(displayState, displayText, data.message || '');
         }
     });
 
-    // B. 前端守門員
+    // B. 前端守門員 (Watchdog)
     setInterval(() => {
         const now = Date.now();
-        if (backendState !== 'offline' && (now - lastHeartbeat > TIMEOUT_MS)) {
+        // ✨ 關鍵修改：用「現在」減「上次收信時間」
+        // 這樣就不會因為 Python 時鐘跟瀏覽器時鐘不同步而誤判斷線了
+        if (backendState !== 'offline' && (now - lastMessageReceivedAt > TIMEOUT_MS)) {
             updateUI('timeout', '連線逾時', '訊號中斷 (No Heartbeat)');
-            stopSmoothClock(); // ✨ 守門員判定斷線時，時鐘也要停
+            stopSmoothClock(); 
         }
     }, 1000);
 
@@ -197,6 +199,7 @@
             
             // 如果時鐘還沒跑，或是誤差超過 2 秒 (嚴重落後或超前) -> 強制校正
             if (!clockInterval || Math.abs(serverSeconds - currentDisplayTimestamp) > 2) {
+                console.log("時鐘校正: 同步後端時間");
                 startSmoothClock(data.timestamp);
             }
             // 如果誤差在 2 秒內 -> 忽略後端時間，繼續用自己的節奏跑 (這樣就不會忽快忽慢)
@@ -226,4 +229,3 @@
 </script>
 </body>
 </html>
-
