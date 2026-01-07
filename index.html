@@ -21,7 +21,7 @@
         .st-active { background-color: #28a745; box-shadow: 0 0 5px #28a745; }
         .st-connecting { background-color: #ffc107; animation: blink 1s infinite; }
         .st-offline { background-color: #dc3545; }
-        .st-timeout { background-color: #dc3545; animation: blink 0.5s infinite; } /* 新增：逾時快閃紅燈 */
+        .st-timeout { background-color: #dc3545; animation: blink 0.5s infinite; }
         
         @keyframes blink { 50% { opacity: 0.4; } }
     </style>
@@ -88,14 +88,47 @@
     let pathLine = L.polyline([], {color: 'blue', weight: 4}).addTo(map);
     let coordsArray = [];
 
-    // --- 3. 狀態管理邏輯 ---
+    // --- 3. 狀態管理與平滑時鐘 (核心修改) ---
     const statusDot = document.getElementById('status-dot');
     const statusText = document.getElementById('connection-text');
     const statusMsg = document.getElementById('status-msg');
+    const timeDisplay = document.getElementById('time');
 
     let lastHeartbeat = 0;
     let backendState = 'offline';
-    const TIMEOUT_MS = 5000; // 5秒判斷逾時
+    const TIMEOUT_MS = 5000;
+
+    // ✨ 平滑時鐘變數
+    let currentDisplayTimestamp = 0; // 當前顯示的秒數
+    let clockInterval = null;        // 計時器物件
+
+    // 啟動或重置本地時鐘
+    function startSmoothClock(initialTime) {
+        if (clockInterval) clearInterval(clockInterval); // 防止重複啟動
+        
+        currentDisplayTimestamp = Math.floor(initialTime);
+        updateTimeText(currentDisplayTimestamp); // 立即更新一次
+
+        clockInterval = setInterval(() => {
+            // 每秒自動 +1，不管後端有沒有傳資料來
+            currentDisplayTimestamp += 1;
+            updateTimeText(currentDisplayTimestamp);
+        }, 1000);
+    }
+
+    // 停止時鐘 (當斷線時)
+    function stopSmoothClock() {
+        if (clockInterval) {
+            clearInterval(clockInterval);
+            clockInterval = null;
+        }
+    }
+
+    // 更新 HTML 時間文字
+    function updateTimeText(unixSeconds) {
+        const dateObj = new Date(unixSeconds * 1000);
+        timeDisplay.innerText = dateObj.toLocaleTimeString('zh-TW', { hour12: false });
+    }
 
     function updateUI(state, text, msg) {
         statusDot.classList.remove('st-active', 'st-connecting', 'st-offline', 'st-timeout');
@@ -107,11 +140,9 @@
             statusDot.classList.add('st-connecting');
             statusText.style.color = '#d39e00';
         } else if (state === 'timeout') {
-            // 新增：逾時專用樣式
             statusDot.classList.add('st-timeout');
             statusText.style.color = '#dc3545';
         } else {
-            // 手動停止 (offline)
             statusDot.classList.add('st-offline');
             statusText.style.color = 'gray';
         }
@@ -120,7 +151,7 @@
         statusMsg.innerText = msg;
     }
 
-    // A. 監聽後端 (處理「手動停止」與「正常連線」)
+    // A. 監聽後端狀態
     const statusRef = ref(db, `${dbPath}/status`);
     onValue(statusRef, (snapshot) => {
         const data = snapshot.val();
@@ -131,31 +162,48 @@
             let displayText = '未連線';
             let displayState = data.state;
 
-            // --- 狀態判讀邏輯 ---
-            if (data.state === 'active') {
-                displayText = '連線正常';
-            } else if (data.state === 'connecting') {
-                displayText = '連線中';
-            } else if (data.state === 'offline') {
-                displayText = '程式已停止'; // 手動關閉顯示這個
+            if (data.state === 'active') displayText = '連線正常';
+            else if (data.state === 'connecting') displayText = '連線中';
+            else if (data.state === 'offline') {
+                displayText = '程式已停止';
+                stopSmoothClock(); // ✨ 程式停止時，時鐘也要停
             } else if (data.state === 'timeout') {
-                displayText = '連線逾時';   // 後端通知的逾時顯示這個
-                displayState = 'timeout';   // 確保觸發紅色閃爍樣式
+                displayText = '連線逾時';
+                displayState = 'timeout';
+                stopSmoothClock(); // ✨ 逾時時，時鐘也要停
             }
             
             updateUI(displayState, displayText, data.message || '');
         }
     });
 
-    // --- 4. 座標更新 ---
+    // B. 前端守門員
+    setInterval(() => {
+        const now = Date.now();
+        if (backendState !== 'offline' && (now - lastHeartbeat > TIMEOUT_MS)) {
+            updateUI('timeout', '連線逾時', '訊號中斷 (No Heartbeat)');
+            stopSmoothClock(); // ✨ 守門員判定斷線時，時鐘也要停
+        }
+    }, 1000);
+
+    // --- 4. 座標更新 (包含時鐘校正) ---
     const latestRef = ref(db, `${dbPath}/latest`);
     onValue(latestRef, (snapshot) => {
         const data = snapshot.val();
         if (data && data.lat) {
-            const dateObj = new Date(data.timestamp * 1000);
-            document.getElementById('time').innerText = dateObj.toLocaleTimeString('zh-TW', { hour12: false });
-            document.getElementById('coords').innerText = `${data.lat.toFixed(5)}, ${data.lon.toFixed(5)}`;
+            
+            // ✨ 時鐘校正邏輯 ✨
+            const serverSeconds = Math.floor(data.timestamp);
+            
+            // 如果時鐘還沒跑，或是誤差超過 2 秒 (嚴重落後或超前) -> 強制校正
+            if (!clockInterval || Math.abs(serverSeconds - currentDisplayTimestamp) > 2) {
+                console.log("時鐘校正: 同步後端時間");
+                startSmoothClock(data.timestamp);
+            }
+            // 如果誤差在 2 秒內 -> 忽略後端時間，繼續用自己的節奏跑 (這樣就不會忽快忽慢)
 
+            // 更新座標與地圖 (這部分需要即時)
+            document.getElementById('coords').innerText = `${data.lat.toFixed(5)}, ${data.lon.toFixed(5)}`;
             const pos = [data.lat, data.lon];
             marker.setLatLng(pos);
             
