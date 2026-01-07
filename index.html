@@ -197,7 +197,6 @@
             
             // 如果時鐘還沒跑，或是誤差超過 2 秒 (嚴重落後或超前) -> 強制校正
             if (!clockInterval || Math.abs(serverSeconds - currentDisplayTimestamp) > 2) {
-                console.log("時鐘校正: 同步後端時間");
                 startSmoothClock(data.timestamp);
             }
             // 如果誤差在 2 秒內 -> 忽略後端時間，繼續用自己的節奏跑 (這樣就不會忽快忽慢)
@@ -227,3 +226,4 @@
 </script>
 </body>
 </html>
+
