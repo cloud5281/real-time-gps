@@ -200,7 +200,6 @@
             });
             historyMarkersLayer.addLayer(circleMarker);
             
-            const dateStr = dateObj.toLocaleDateString();
             const altText = (data.alt !== undefined && data.alt !== null) ? data.alt.toFixed(1) : "N/A";
 
             // 4. 設定提示框內容 (使用 HTML 排版)
@@ -226,6 +225,7 @@
 </script>
 </body>
 </html>
+
 
 
 
