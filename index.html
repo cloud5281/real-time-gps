@@ -190,7 +190,7 @@
             // 4. 設定提示框內容 (使用 HTML 排版)
             const tooltipContent = `
                 <div style="text-align: left; line-height: 1.5;">
-                    <span style="color: #ffc107;">⏰ 時間:</span> ${data.display_time}<br>
+                    <span style="color: #ffc107;">⏰ 時間:</span> ${data.timestamp}<br>
                     <b>📍 緯度:</b> ${data.lat.toFixed(6)}<br>
                     <b>📍 經度:</b> ${data.lon.toFixed(6)}<br>
                     <b>🏔️ 高度:</b> ${altText} m
@@ -210,5 +210,6 @@
 </script>
 </body>
 </html>
+
 
 
