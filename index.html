@@ -88,7 +88,8 @@
     let marker = L.marker([0, 0], { icon: personIcon }).addTo(map);
     let pathLine = L.polyline([], {color: 'blue', weight: 4}).addTo(map);
     let coordsArray = [];
-
+    let historyMarkersLayer = L.layerGroup().addTo(map);
+    
     // --- 3. 狀態管理邏輯 ---
     let lastKnownCoords = "-"; // 儲存最後一次有效的座標字串
     let backendState = 'offline';
@@ -173,9 +174,19 @@
             const pos = [data.lat, data.lon];
             coordsArray.push(pos);
             pathLine.setLatLngs(coordsArray);
+
+            const circleMarker = L.circleMarker(pos, {
+                color: 'white',       // 白色邊框
+                fillColor: '#007bff', // 亮藍色填充
+                fillOpacity: 0.9,     // 填充不透明度 (越接近 1 越實心)
+                weight: 2,            // 邊框粗細
+                radius: 7             // ✨ 圓點半徑 (原本是線條，現在改大一點，例如 7 或 8)
+            });
+            historyMarkersLayer.addLayer(circleMarker);
         }
     });
 
 </script>
 </body>
 </html>
+
