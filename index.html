@@ -24,6 +24,22 @@
         .st-timeout { background-color: #dc3545; }
         
         @keyframes blink { 50% { opacity: 0.4; } }
+
+        .custom-tooltip {
+            background: rgba(0, 0, 0, 0.85); /* 深色背景 */
+            border: 1px solid #666;
+            border-radius: 5px;
+            color: #fff; /* 白色文字 */
+            font-weight: normal;
+            padding: 6px 10px;
+            font-size: 13px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+        }
+        /* 讓 Tooltip 的小箭頭也變成黑色 */
+        .leaflet-tooltip-left:before { border-left-color: rgba(0, 0, 0, 0.85); }
+        .leaflet-tooltip-right:before { border-right-color: rgba(0, 0, 0, 0.85); }
+        .leaflet-tooltip-top:before { border-top-color: rgba(0, 0, 0, 0.85); }
+        .leaflet-tooltip-bottom:before { border-bottom-color: rgba(0, 0, 0, 0.85); }
     </style>
 </head>
 <body>
@@ -210,6 +226,7 @@
 </script>
 </body>
 </html>
+
 
 
 
