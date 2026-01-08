@@ -102,7 +102,7 @@
     });
 
     let marker = L.marker([0, 0], { icon: personIcon }).addTo(map);
-    let pathLine = L.polyline([], {color: 'blue', weight: 4}).addTo(map);
+    let pathLine = L.polyline([], {color: 'blue', weight: 4, interactive: false}).addTo(map);
     let coordsArray = [];
     let historyMarkersLayer = L.layerGroup().addTo(map);
     
@@ -217,7 +217,8 @@
                 permanent: false,    // false = 滑鼠移上去才顯示，true = 一直顯示
                 direction: 'top',    // 顯示在圓點上方
                 className: 'custom-tooltip', // 套用我們在 CSS 寫的樣式
-                offset: [0, -8]      // 位置稍微往上調一點點
+                offset: [0, -8],      // 位置稍微往上調一點點
+                interactive: true
             });
         }
     });
@@ -225,6 +226,7 @@
 </script>
 </body>
 </html>
+
 
 
 
